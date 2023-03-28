@@ -1,0 +1,26 @@
+# Password manager
+
+1. Commands
+1.1. add +
+1.1.1. account :
+1.2. remove -
+1.2.1 account :
+1.2.2 backup
+1.2. info #
+1.2.1. account :
+
+==================================================
+1. Commands
+
+help [*topic*]
+
+add account *name*
+
+remove account *name*
+
+remove backup
+
+info account *name*
+
+
+
