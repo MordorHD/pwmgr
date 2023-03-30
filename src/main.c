@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -13,13 +14,6 @@
 const char *realPath;
 char path[1024];
 int fdBackup;
-
-#define ATTR_DEFAULT (COLOR_PAIR(0))
-#define ATTR_HIGHLIGHT (COLOR_PAIR(0) | A_BOLD)
-#define ATTR_SPECIAL (COLOR_PAIR(1))
-#define ATTR_ERROR (COLOR_PAIR(2))
-#define ATTR_FATAL (COLOR_PAIR(3))
-#define ATTR_LOG (COLOR_PAIR(4))
 
 static const struct {
 	const char *name;
@@ -45,6 +39,7 @@ void help(const struct node *node, struct value *values);
 void add_account(const struct node *node, struct value *values);
 void add_property(const struct node *node, struct value *values);
 void remove_account(const struct node *node, struct value *values);
+void remove_property(const struct node *node, struct value *values);
 void remove_backup(const struct node *node, struct value *values);
 void info_account(const struct node *node, struct value *values);
 void tree(const struct node *node, struct value *values);
@@ -57,7 +52,7 @@ static const struct node helpNodes[] = {
 	{ "help", "shows help for a specific command", 0, .proc = help },
 	{ "accounts", "accounts are combinations of data like password username, dob that make up an online presence", 0, .proc = help },
 	{ "backup", "backups are local files that store accounts that were once created and even those that were deleted", 0, .proc = help },
-	{ "tree", "shows a tree view of a utility command", 0, .proc = help },
+	{ "tree", "shows a tree view of all commands", 0, .proc = help },
 };
 static const struct node addPropertyAccountNodes[] = {
 	{ "value", "set a specific value (\"name: value\")", 0, .proc = add_property },
@@ -69,9 +64,13 @@ static const struct node addNodes[] = {
 	{ "account", "add an account", 0, .proc = add_account },
 	{ "property", "adds a property", ARRLEN(addPropertyNodes), .subnodes = addPropertyNodes },
 };
+static const struct node removePropertyNodes[] = {
+	{ "account", "choose an account to remove the property from", 0, .proc = remove_property },
+};
 static const struct node removeNodes[] = {
 	{ "account", "remove an account from the list of accounts", 0, .proc = remove_account },
 	{ "backup", "remove the active backup", 0, .proc = remove_backup },
+	{ "property", "remove the active backup", ARRLEN(removePropertyNodes), .subnodes = removePropertyNodes},
 };
 static const struct node infoNodes[] = {
 	{ "account", "shows information about an account", 0, .proc = info_account },
@@ -124,7 +123,7 @@ add_account(const struct node *node, struct value *values)
 		printw("\nAccount '%.*s' already exists", nName, name);
 		return;
 	}
-	fd = open(path, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	fd = open(path, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
 	if(fd == ERR)
 	{
 		attrset(ATTR_ERROR);
@@ -172,12 +171,14 @@ add_property(const struct node *node, struct value *values)
 		{
 			attrset(ATTR_ERROR);
 			printw("\nFile '%s/%.*s' is corrupt (state: 0)", realPath, nAccName, accName);
+			close(fd);
 			return;
 		}
 		if(nName == nPropName && !memcmp(name, propName, nPropName))
 		{
 			attrset(ATTR_ERROR);
 			printw("\nProperty '%.*s' already exists", nPropName, propName);
+			close(fd);
 			return;
 		}
 		nRead -= nName + 1;
@@ -187,6 +188,7 @@ add_property(const struct node *node, struct value *values)
 		{
 			attrset(ATTR_ERROR);
 			printw("\nFile '%s/%.*s' is corrupt (state: 1)", realPath, nAccName, accName);
+			close(fd);
 			return;
 		}
 		nValue = strlen(path);
@@ -198,6 +200,7 @@ add_property(const struct node *node, struct value *values)
 			{
 				attrset(ATTR_ERROR);
 				printw("\nFile '%s/%.*s' is corrupt (state: 2)", realPath, nAccName, accName);
+				close(fd);
 				return;
 			}
 		}
@@ -215,12 +218,110 @@ add_property(const struct node *node, struct value *values)
 }
 
 void
-remove_property(const struct node *node, struct value *value)
+remove_property(const struct node *node, struct value *values)
 {
+	char *propName;
+	U32 nPropName;
+	char *accName;
+	U32 nAccName;
 	int fd;
+	ssize_t nRead;
 	int fdTmp;
+	bool removed = false;
+	char tmpPath[sizeof(path)];
 
+	propName = values[0].word;
+	nPropName = values[0].nWord;
+	accName = values[1].word;
+	nAccName = values[1].nWord;
+	appendrealpath(accName, nAccName);
+	fd = open(path, O_RDONLY);
+	if(fd == ERR)
+	{
+		attrset(ATTR_ERROR);
+		printw("\nUnable to open account '%.*s' (%s)", nAccName, accName, strerror(errno));
+		return;
+	}
+	appendrealpath(".tmp", 4);
+	fdTmp = open(path, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
+	if(fdTmp == ERR)
+	{
+		attrset(ATTR_FATAL);
+		printw("\nUnable to create temporary file (%s)", strerror(errno));
+		close(fd);
+		return;
+	}
+	strcpy(tmpPath, path);
 
+	// write all properties besides the property which should be removed
+	path[sizeof(path) - 1] = 0;
+	nRead = read(fd, path, sizeof(path) - 1);
+	while(nRead > 0)
+	{
+		char *name;
+		U32 nName;
+		U32 nValue;
+		bool ignoreWrite = false;
+
+		name = path;
+		nName = strlen(path);
+		if(nName > nRead)
+			goto corrupt;
+		if(nName == nPropName && !memcmp(name, propName, nPropName))
+		{
+			attrset(ATTR_ERROR);
+			removed = true;
+			ignoreWrite = true;	
+		}
+		if(!ignoreWrite)
+			write(fdTmp, name, nName + 1);
+		nRead -= nName + 1;
+		memcpy(path, path + nName + 1, nRead);
+		nRead += read(fd, path + nRead, sizeof(path) - 1 - nRead);
+		if(!nRead)
+			goto corrupt;
+		nValue = strlen(path);
+		if(!ignoreWrite)
+			write(fdTmp, path, nValue);
+		while(nValue == sizeof(path) - 1)
+		{
+			nRead = read(fd, path, sizeof(path) - 1);
+			nValue = strlen(path);
+			if(nValue > nRead)
+				goto corrupt;
+			if(!ignoreWrite)
+				write(fdTmp, path, nValue);
+		}
+		if(!ignoreWrite)
+			write(fdTmp, &(char) { 0 }, 1);
+		nRead -= nValue + 1;
+		memcpy(path, path + nValue + 1, nRead);
+		nRead += read(fd, path + nRead, sizeof(path) - 1 - nRead);
+	}
+	close(fd);
+	if(!removed)
+	{
+		attrset(ATTR_ERROR);
+		printw("\nProperty '%.*s' doesn't exist", nPropName, propName);
+		return;
+	}
+	appendrealpath(accName, nAccName);
+	if(renameat2(AT_FDCWD, tmpPath, AT_FDCWD, path, RENAME_EXCHANGE))
+	{
+		attrset(ATTR_FATAL);
+		printw("\nFailed atomically swapping temporary file and new file (%s)", strerror(errno));
+	}
+	close(fdTmp);
+	remove(tmpPath);
+	attrset(ATTR_LOG);
+	printw("\nRemoved property '%.*s' from account '%.*s'", nPropName, propName, nAccName, accName);
+	return;
+corrupt:
+	close(fdTmp);
+	remove(tmpPath);
+	close(fd);
+	attrset(ATTR_FATAL);
+	printw("\nFile '%s/%.*s' is corrupt", realPath, nAccName, accName);
 }
 
 void
@@ -279,40 +380,33 @@ info_account(const struct node *node, struct value *values)
 		name = path;
 		nName = strlen(path);
 		if(nName > nRead)
-		{
-			attrset(ATTR_ERROR);
-			printw("\nFile '%s/%.*s' is corrupt (state: 0)", realPath, nAccName, accName);
-			return;
-		}
+			goto corrupt;
 		printw("\n%.*s = ", nName, name);
 		nRead -= nName + 1;
 		memcpy(path, path + nName + 1, nRead);
 		nRead += read(fd, path + nRead, sizeof(path) - 1 - nRead);
 		if(!nRead)
-		{
-			attrset(ATTR_ERROR);
-			printw("\nFile '%s/%.*s' is corrupt (state: 1)", realPath, nAccName, accName);
-			return;
-		}
+			goto corrupt;
 		nValue = strlen(path);
 		printw("%.*s", nValue, path);
 		while(nValue == sizeof(path) - 1)
 		{
 			nRead = read(fd, path, sizeof(path) - 1);
 			nValue = strlen(path);
-			printw("%.*s", nValue, path);
 			if(nValue > nRead)
-			{
-				attrset(ATTR_ERROR);
-				printw("\nFile '%s/%.*s' is corrupt (state: 2)", realPath, nAccName, accName);
-				return;
-			}
+				goto corrupt;
+			printw("%.*s", nValue, path);
 		}
 		nRead -= nValue + 1;
 		memcpy(path, path + nValue + 1, nRead);
 		nRead += read(fd, path + nRead, sizeof(path) - 1 - nRead);
 	}
 	close(fd);
+	return;
+corrupt:
+	close(fd);
+	attrset(ATTR_ERROR);
+	printw("\nFile '%s/%.*s' is corrupt", realPath, nAccName, accName);
 }
 
 void
@@ -371,7 +465,7 @@ list_account(const struct node *node, struct value *values)
 		return;
 	attrset(ATTR_LOG);
 	while((dirent = readdir(dir)))
-		if(dirent->d_type == DT_REG && strcmp(dirent->d_name, ".backup"))
+		if(dirent->d_type == DT_REG && dirent->d_name[0] != '.')
 			printw("\n\t%s", dirent->d_name);
 	closedir(dir);
 }
@@ -402,7 +496,6 @@ main(void)
 	struct input input;
 
 	memset(&input, 0, sizeof(input));
-	input.tokenizer.line = input.buf;
 	locale = setlocale(LC_ALL, "");
 
 	initscr();
@@ -418,6 +511,7 @@ main(void)
 	init_pair(2, COLOR_MAGENTA, COLOR_BLACK);
 	init_pair(3, COLOR_RED, COLOR_BLACK);
 	init_pair(4, COLOR_CYAN, COLOR_BLACK);
+	init_pair(5, COLOR_YELLOW, COLOR_BLACK);
 
 	attrset(ATTR_LOG);
 	printw("Starting setup...");
@@ -468,17 +562,12 @@ main(void)
 	attrset(ATTR_SPECIAL);
 	printw("\nPassword manager unstable version 1");
 	list_account(NULL, NULL);
-	// osu\0[4 bytes]firefox\0[4 bytes]gmx\0[4 bytes]
-	// [4 bytes]value\0...
-	//
-	// [byte]
-	// - add account [name]\0
-	// - add property [name]\0[name]\0[value]\0
 	while(1)
 	{
 		TOKEN *tok;
 		const struct node *branch;
 		const struct node *newBranch;
+		struct value value;
 		struct value values[10];
 		U32 nValues = 0;
 
@@ -502,26 +591,11 @@ main(void)
 			}
 		}
 
-		attrset(ATTR_DEFAULT);
-		printw("\n");
-		getinput(&input, isUtf8);
-		printw("\n%s", input.buf);
-		if(tokenize(&input.tokenizer))
-		{
-			attrset(ATTR_ERROR);
-			printw("\n");
-			for(U32 i = 0; i < input.tokenizer.errPos; i++)
-				printw(" ");
-			printw("^\nInvalid token");
-			continue;
-		}
-		printw("\n%u", input.tokenizer.nTokens);
-		for(U32 i = 0; i < input.tokenizer.nTokens; i++)
-			printw("\n%u, %u", input.tokenizer.tokens[i].pos, input.tokenizer.tokens[i].type);
-		if(!input.tokenizer.nTokens)
+		addch('\n');
+		if(getinput(&input, isUtf8))
 			continue;
 		branch = root;
-		while((tok = nexttoken(&input.tokenizer)))
+		while((tok = nexttoken(&input, &value)))
 		{
 			const char *word;
 			U32 l = 0;
@@ -529,20 +603,19 @@ main(void)
 
 			switch(tok->type)
 			{
-			case TWORD: word = input.buf + tok->pos; break;
-			case TPLUS: word = "add"; break;
-			case TMINUS: word = "remove"; break;	
-			case TCOLON: word = "account"; break;
-			case THASH: word = "info"; break;
-			case TEQU: word = "value"; break;
-			case TAT: word = "property"; break;
-			case TQUESTION: word = "info"; break;
+			case TWORD: word = value.word; l = value.nWord; break;
+			case TPLUS: word = "add"; l = 3; break;
+			case TMINUS: word = "remove"; l = 6; break;	
+			case TCOLON: word = "account"; l = 7; break;
+			case TQUESTION: word = "info"; l = 4; break;
+			case TEQU: word = "value"; l = 5; break;
+			case TAT: word = "property"; l = 8; break;
 			default:
 				attrset(ATTR_ERROR);
-				printw("\n");
+				addch('\n');
 				for(U32 i = 0; i < tok->pos; i++)
-					printw(" ");
-				printw("^\nInvalid token");
+					addch(' ');
+				addstr("^\nInvalid token");
 				word = NULL;
 			}
 			if(!word)
@@ -550,12 +623,10 @@ main(void)
 				branch = NULL;
 				break;
 			}
-			while(isalpha(word[l]))
-				l++;
 			for(i = 0; i < ARRLEN(dependencies); i++)
 				if(strlen(dependencies[i].name) == l && !memcmp(dependencies[i].name, word, l))
 				{
-					if(!(tok = nexttoken(&input.tokenizer)) || tok->type != dependencies[i].token)
+					if(!(tok = nexttoken(&input, &value)) || tok->type != dependencies[i].token)
 					{
 						attrset(ATTR_ERROR);
 						printw("\nExpected %s after '%.*s'", dependencies[i].description, l, word);
@@ -563,7 +634,7 @@ main(void)
 						branch = NULL;
 						break;
 					}
-					toktovalue(&input.tokenizer, tok - input.tokenizer.tokens, values + nValues++);
+					values[nValues++] = value;
 					break;
 				}
 			if((I32) i == -1)

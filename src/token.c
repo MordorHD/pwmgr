@@ -1,68 +1,61 @@
 #include "pwmgr.h"
 
-U32
-getwordlen(TOKENIZER *tokenizer, U32 token)
-{
-	U32 l = 0;
-	char *str;
-
-	str = tokenizer->line + tokenizer->tokens[token].pos;
-	while(isalnum(str[l]) || str[l] == '_')
-		l++;
-	return l;
-}
-
-U32
-getstringlen(TOKENIZER *tokenizer, U32 token)
-{
-	U32 l = 0;
-	bool e = false;
-	char *str;
-
-	str = tokenizer->line + tokenizer->tokens[token].pos;
-	str++;
-	while(str[l] != '\"' || e)
-	{
-		if(str[l] == '\\')
-			e = !e;
-		else
-			e = false;
-		l++;
-	}
-	return l;
-}
-
-void
-toktovalue(TOKENIZER *tokenizer, U32 token, struct value *value)
+TOKEN *
+nexttoken(struct input *input, struct value *value)
 {
 	TOKEN *tok;
 
-	tok = tokenizer->tokens + token;
+	if(input->iToken == input->nTokens)
+		return NULL;
+	tok = input->tokens + input->iToken;
 	value->pos = tok->pos;
+	value->word = input->buf + tok->pos;
+	value->nWord = gettokenlen(input, input->iToken);
+	if(tok->type == TSTRING)
+	{
+		value->word++;
+		value->nWord -= 2;
+	}
+	input->iToken++;
+	return tok;
+}
+
+U32
+gettokenlen(struct input *input, U32 token)
+{
+	TOKEN *tok;
+	U32 l;
+	bool e = false;
+	char *str;
+
+	tok = input->tokens + token;
 	switch(tok->type)
 	{
 	case TWORD:
-		value->word = tokenizer->line + tok->pos;
-		value->nWord = getwordlen(tokenizer, token);
+		str = input->buf + tok->pos;
+		l = 0;
+		while(isalnum(str[l]) || str[l] == '_')
+			l++;
 		break;
 	case TSTRING:
-		value->string = tokenizer->line + tok->pos + 1;
-		value->nString = getstringlen(tokenizer, token);
+		str = input->buf + tok->pos;
+		l = 1;
+		while(str[l] != '\"' || e)
+		{
+			e = !e && str[l] == '\\';
+			l++;
+		}
+		l++;
 		break;
 	default:
-		attrset(COLOR_PAIR(3));
-		printw("FATAL INTERNAL ERROR (tokenizer)");
-		printf("\nPress any key to exit...");
-		getch();
-		endwin();
-		abort();
+		return 1;
 	}
+	return l;
 }
 
 int
-tokenize(TOKENIZER *tokenizer)
+tokenize(struct input *input)
 {
-	// THE BEST AND MOST INTELEGENT TOKENIZER YOU'VE EVER SEEN
 	static const U32 map[0x100] = {
 		[' '] = ESPACE,
 		['\t'] = ESPACE,
@@ -90,98 +83,75 @@ tokenize(TOKENIZER *tokenizer)
 		['-'] = TMINUS,
 		['='] = TEQU,
 	};
-	// connections of the tokens
-	static const struct {
-		U32 tok1, tok2;
-		U32 resTok;
-	} fusions[] = {
-		// word
-		{ TWORD, TWORD, TWORD },
-		// string
-		{ ZQUOTEBEGIN, ZQUOTEBEGIN, TSTRING },
-		{ ZQUOTEESCAPE, ZQUOTEBEGIN, ZQUOTEBEGIN },
-		{ ZQUOTEBEGIN, ESPACE, ZQUOTEBEGIN },
-		{ ZQUOTEBEGIN, 0, ZQUOTEBEGIN },
-		{ ZQUOTEBEGIN, ZQUOTEBEGIN, ZQUOTEBEGIN },
-		{ ZQUOTEBEGIN, ZQUOTEESCAPE, ZQUOTEESCAPE },
-		{ ZQUOTEBEGIN, TWORD, ZQUOTEBEGIN },
-		{ ZQUOTEBEGIN, TCOLON, ZQUOTEBEGIN },
-		{ ZQUOTEBEGIN, TDOT, ZQUOTEBEGIN },
-		{ ZQUOTEBEGIN, TCOMMA, ZQUOTEBEGIN },
-		{ ZQUOTEBEGIN, TPERCENT, ZQUOTEBEGIN },
-		{ ZQUOTEBEGIN, TEXCLAM, ZQUOTEBEGIN },
-		{ ZQUOTEBEGIN, TQUESTION, ZQUOTEBEGIN },
-		{ ZQUOTEBEGIN, THASH, ZQUOTEBEGIN },
-		{ ZQUOTEBEGIN, TPLUS, ZQUOTEBEGIN },
-		{ ZQUOTEBEGIN, TMINUS, ZQUOTEBEGIN },
-		{ ZQUOTEBEGIN, TEQU, ZQUOTEBEGIN },
-	};
-	// transformations
-	static const U32 trans[ZMAX] = {
-		[ZQUOTEBEGIN] = TSTRING,
-		[ZQUOTEESCAPE] = TERROR,
-	};
-	char *line;
+	int errCode = OK;
+	char *buf;
 	TOKEN *tokens = NULL;
 	U32 nTokens = 0, capTokens = 0;
 	U32 last = 0;
 
-	tokens = tokenizer->tokens;
-	capTokens = tokenizer->capTokens;
-	for(line = tokenizer->line; *line; line++)
+	input->iToken = 0;
+	tokens = input->tokens;
+	capTokens = input->capTokens;
+	for(buf = input->buf; *buf; buf++)
 	{
 		U32 m;
 		
-		m = map[(int) (unsigned char) *line];
-		for(U32 f = 0; f < ARRLEN(fusions); f++)
-			if(last == fusions[f].tok1 &&
-				m == fusions[f].tok2)
+		m = map[(int) (unsigned char) *buf];
+		switch(last)
+		{
+		case ZQUOTEBEGIN:
+			if(m == ZQUOTEBEGIN)
 			{
-				if((last = fusions[f].resTok))
-					tokens[nTokens - 1].type = fusions[f].resTok;
-				goto made_fusion;
+				tokens[nTokens - 1].type = TSTRING;
+				last = TSTRING;
 			}
+			else if(m == ZQUOTEESCAPE)
+			{
+				last = ZQUOTEESCAPE;
+			}
+			goto fusion;
+		case ZQUOTEESCAPE:
+			if(m != ZQUOTEBEGIN)
+			{
+				nTokens--;
+				input->errPos = buf - input->buf;
+				errCode = ERR;
+				goto end;
+			}
+			last = ZQUOTEBEGIN;
+			goto fusion;
+		case TWORD:
+			if(m == TWORD)
+				goto fusion;
+			break;
+		}
 		if(!m) // unrecognized character
 		{
-			tokenizer->errPos = line - tokenizer->line;
-			return ERR;
+			input->errPos = buf - input->buf;
+			errCode = ERR;
+			goto end;
 		}
 		if(m > EMAX)
 		{
 			if(nTokens == capTokens)
 			{
-				capTokens = (capTokens + 1) * 2;
+				capTokens = 1 + capTokens * 2;
 				tokens = realloc(tokens, sizeof(*tokens) * capTokens);
 			}
-			tokens[nTokens++] = (TOKEN) { m, line - tokenizer->line };
+			tokens[nTokens++] = (TOKEN) { m, buf - input->buf };
 		}
 		last = m;
-	made_fusion:;
+	fusion:;
 	}
-	tokenizer->tokens = tokens;
-	tokenizer->nTokens = nTokens;
-	tokenizer->capTokens = capTokens;
-	tokenizer->iToken = 0;
-	// transform tokens
-	for(; nTokens; nTokens--, tokens++)
-		if(tokens->type < ZMAX)
-		{
-			U32 to;
-
-			to = trans[tokens->type];
-			if(!to)
-			{
-				tokenizer->errPos = tokens->pos;
-				return ERR;
-			}
-			tokens->type = to;
-		}
-	return OK;
+	if(nTokens && tokens[nTokens - 1].type < ZMAX)
+	{
+		input->errPos = tokens[--nTokens].pos;
+		errCode = ERR;
+	}
+end:
+	input->tokens = tokens;
+	input->nTokens = nTokens;
+	input->capTokens = capTokens;
+	return errCode;
 }
 
-TOKEN *nexttoken(TOKENIZER *tokenizer)
-{
-	if(tokenizer->iToken == tokenizer->nTokens)
-		return NULL;
-	return tokenizer->tokens + tokenizer->iToken++;
-}

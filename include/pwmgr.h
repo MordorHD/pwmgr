@@ -24,6 +24,17 @@
 typedef uint32_t U32;
 typedef int32_t I32;
 
+#define ATTR_DEFAULT (COLOR_PAIR(0))
+#define ATTR_HIGHLIGHT (COLOR_PAIR(0) | A_BOLD)
+#define ATTR_SPECIAL (COLOR_PAIR(1))
+#define ATTR_ERROR (COLOR_PAIR(2))
+#define ATTR_FATAL (COLOR_PAIR(3))
+#define ATTR_LOG (COLOR_PAIR(4))
+
+#define ATTR_SYNTAX_KEYWORD (COLOR_PAIR(0) | A_BOLD)
+#define ATTR_SYNTAX_WORD (COLOR_PAIR(0))
+#define ATTR_SYNTAX_STRING (COLOR_PAIR(5) | A_DIM)
+
 enum {
 	TERROR,
 	ESPACE,
@@ -57,24 +68,21 @@ typedef struct {
 	U32 pos;
 } TOKEN;
 
-typedef struct {
-	char *line;
-	TOKEN *tokens;
-	U32 nTokens, capTokens;
-	U32 iToken;
-	U32 errPos;
-} TOKENIZER;
+struct input;
 
-int tokenize(TOKENIZER *tokenizer);
-TOKEN *nexttoken(TOKENIZER *tokenizer);
-void toktovalue(TOKENIZER *tokenizer, U32 token, struct value *value);
+int tokenize(struct input *input);
+TOKEN *nexttoken(struct input *input, struct value *value);
+U32 gettokenlen(struct input *input, U32 token);
 
 struct input {
 	char buf[0x1000];
 	U32 nBuf;
 	U32 nextHistory;
 	char history[0x8000];
-	TOKENIZER tokenizer;
+	TOKEN *tokens;
+	U32 nTokens, capTokens;
+	U32 iToken;
+	U32 errPos;
 };
 
 int getinput(struct input *input, bool isUtf8);
