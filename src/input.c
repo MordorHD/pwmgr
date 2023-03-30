@@ -1,21 +1,65 @@
 #include "pwmgr.h"
 
-void
-renderinput(struct input *input, int i, int n, int x, int y)
+int
+renderinput(struct input *input, U32 iBuf, U32 nBuf, int x, int y, int *pCurX, int *pCurY)
 {
 	int cy, cx;
+	int err;
+	TOKEN *last = NULL;
+	U32 tokenLen;
 
-	// erase input
-	for(int l = y; l < LINES - 1; l++)
-	for(int c = 0; c < COLS; c++)
-		mvaddch(l, c, ' ');
-	for(int c = 0; c < COLS - 1; c++)
-		mvaddch(LINES - 1, c, ' ');
-	// redraw input in two steps (from beginning to cursor and then from cursor to end)
-	mvaddnstr(y, x, input->buf, i);
+	// measure cursor position
+	mvaddnstr(y, x, input->buf, iBuf);
 	getyx(stdscr, cy, cx);
-	addnstr(input->buf + i, input->nBuf - i);
-	move(cy, cx);
+	// erase input
+	attrset(ATTR_DEFAULT);
+	move(y, 0);
+	for(int i = 0, n = (LINES - y - 1) * COLS + COLS - 1; i < n; i++)
+		addch(' ');
+	move(y, x);
+	input->buf[nBuf] = 0;
+	err = tokenize(input);
+	for(U32 i = 0, nTokens = input->nTokens; i < nTokens; i++)
+	{
+		TOKEN *tok;
+
+		tok = input->tokens + i;
+		if(last)
+		{
+			attrset(ATTR_DEFAULT);
+			addnstr(input->buf + last->pos + tokenLen, tok->pos - last->pos - tokenLen);
+		}
+		switch(tok->type)
+		{
+		case TWORD:
+			attrset(ATTR_SYNTAX_WORD);
+			break;
+		case TSTRING:
+			attrset(ATTR_SYNTAX_STRING);
+			break;
+		default:
+			attrset(ATTR_SYNTAX_KEYWORD);
+		}
+		tokenLen = gettokenlen(input, i);
+		addnstr(input->buf + tok->pos, tokenLen);
+		last = tok;
+	}
+	if(err)
+	{
+		U32 pos;
+
+		pos = input->errPos;
+		if(last)
+		{
+			attrset(ATTR_DEFAULT);
+			addnstr(input->buf + last->pos + tokenLen, pos - last->pos - tokenLen);
+		}
+		attrset(ATTR_ERROR);
+		addnstr(input->buf + pos, nBuf - pos);
+	}
+	*pCurX = cx;
+	*pCurY = cy;
+	return err;
 }
 
 int
@@ -32,6 +76,7 @@ getinput(struct input *input, bool isUtf8)
 	I32 overflowHistory;
 	U32 curHistory;
 	U32 lastHistory;
+	int tokErr;
 
 	input->nBuf = 0;
 	buf = input->buf;
@@ -46,13 +91,17 @@ getinput(struct input *input, bool isUtf8)
 	getyx(stdscr, y, x);
 	while(1)
 	{
-		int cx, cy, ch;
+		int cx, cy, ex, ey, ch;
 
-		renderinput(input, iBuf, nBuf, x, y);
-		getyx(stdscr, cy, cx);
+		tokErr = renderinput(input, iBuf, nBuf, x, y, &cx, &cy);
+		getyx(stdscr, ey, ex);
+		move(cy, cx);
 		ch = getch();
 		if(ch == '\n')
+		{
+			move(ey, ex);
 			break;
+		}
 		if(ch >= 0x20 && ((ch <= 0xFF && isUtf8) || ch < 0x7F))
 		{
 			char bUtf8[12];
@@ -89,6 +138,12 @@ getinput(struct input *input, bool isUtf8)
 		}
 		switch(ch)
 		{
+		case KEY_HONE:
+			iBuf = 0;
+			break;
+		case KEY_END:
+			iBuf = nBuf;
+			break;
 		case KEY_LEFT:
 			if(iBuf)
 			{
@@ -172,8 +227,8 @@ getinput(struct input *input, bool isUtf8)
 	}
 	input->nBuf = nBuf;
 	buf[nBuf] = 0;
-	if(!nBuf)
-		return 0;
+	if(!input->nTokens)
+		return ERR;
 	lastHistory = curHistory;
 	if(curHistory)
 	{
@@ -196,5 +251,5 @@ getinput(struct input *input, bool isUtf8)
 		nextHistory += nBuf + 1;
 	}
 	input->nextHistory = nextHistory;
-	return nBuf;
+	return tokErr;
 }
