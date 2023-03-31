@@ -138,7 +138,7 @@ getinput(struct input *input, bool isUtf8)
 		}
 		switch(ch)
 		{
-		case KEY_HONE:
+		case KEY_HOME:
 			iBuf = 0;
 			break;
 		case KEY_END:

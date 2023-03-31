@@ -1,7 +1,13 @@
 #include "pwmgr.h"
 
+bool
+hasnexttoken(struct input *input)
+{
+	return input->iToken < input->nTokens;
+}
+
 TOKEN *
-nexttoken(struct input *input, struct value *value)
+peektoken(struct input *input, struct value *value)
 {
 	TOKEN *tok;
 
@@ -16,8 +22,21 @@ nexttoken(struct input *input, struct value *value)
 		value->word++;
 		value->nWord -= 2;
 	}
-	input->iToken++;
 	return tok;
+}
+
+TOKEN *
+nexttoken(struct input *input, struct value *value)
+{
+	TOKEN *tok;
+
+	tok = peektoken(input, value);
+	if(tok)
+	{
+		input->iToken++;
+		return tok;
+	}
+	return NULL;
 }
 
 U32
@@ -50,7 +69,7 @@ gettokenlen(struct input *input, U32 token)
 	default:
 		return 1;
 	}
-	return l;
+	return MIN(l, (U32) MAX_NAME);
 }
 
 int
@@ -122,7 +141,15 @@ tokenize(struct input *input)
 			goto fusion;
 		case TWORD:
 			if(m == TWORD)
+			{
+				if(buf - input->buf - tokens[nTokens - 1].pos >= MAX_NAME)
+				{
+					input->errPos = buf - input->buf;
+					errCode = ERR;
+					goto end;
+				}
 				goto fusion;
+			}
 			break;
 		}
 		if(!m) // unrecognized character

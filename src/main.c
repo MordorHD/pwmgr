@@ -1,6 +1,4 @@
 #define _GNU_SOURCE
-#include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/types.h>
@@ -8,91 +6,18 @@
 #include <dirent.h>
 #include <errno.h>
 #include <locale.h>
-#include <ncurses.h>
 #include "pwmgr.h"
 
+#define VERSION "Unstable Version 1"
+
+// location of the main directory
 const char *realPath;
+// the path size must be at least
+// 1 + sizeof(time_t) + 2 * MAX_NAME + 2
+// bytes large
 char path[1024];
+// open backup file
 int fdBackup;
-
-static const struct {
-	const char *name;
-	const char *description;
-	U32 token;	
-} dependencies[] = {
-	{ "account", "name", TWORD },
-	{ "property", "name", TWORD },
-	{ "value", "string", TSTRING },
-};
-
-struct node {
-	const char *name;
-	const char *description;
-	U32 nSubnodes;
-	union {
-		const struct node *subnodes;
-		void (*proc)(const struct node *node, struct value *values);
-	};
-};
-
-void help(const struct node *node, struct value *values);
-void add_account(const struct node *node, struct value *values);
-void add_property(const struct node *node, struct value *values);
-void remove_account(const struct node *node, struct value *values);
-void remove_property(const struct node *node, struct value *values);
-void remove_backup(const struct node *node, struct value *values);
-void info_account(const struct node *node, struct value *values);
-void tree(const struct node *node, struct value *values);
-void list_account(const struct node *node, struct value *values);
-void list_backup(const struct node *node, struct value *values);
-void cmd_quit(const struct node *node, struct value *values);
-void cmd_clear(const struct node *node, struct value *values);
-
-static const struct node helpNodes[] = {
-	{ "help", "shows help for a specific command", 0, .proc = help },
-	{ "accounts", "accounts are combinations of data like password username, dob that make up an online presence", 0, .proc = help },
-	{ "backup", "backups are local files that store accounts that were once created and even those that were deleted", 0, .proc = help },
-	{ "tree", "shows a tree view of all commands", 0, .proc = help },
-};
-static const struct node addPropertyAccountNodes[] = {
-	{ "value", "set a specific value (\"name: value\")", 0, .proc = add_property },
-};
-static const struct node addPropertyNodes[] = {
-	{ "account", "choose account to set property to", ARRLEN(addPropertyAccountNodes), .subnodes = addPropertyAccountNodes },
-};
-static const struct node addNodes[] = {
-	{ "account", "add an account", 0, .proc = add_account },
-	{ "property", "adds a property", ARRLEN(addPropertyNodes), .subnodes = addPropertyNodes },
-};
-static const struct node removePropertyNodes[] = {
-	{ "account", "choose an account to remove the property from", 0, .proc = remove_property },
-};
-static const struct node removeNodes[] = {
-	{ "account", "remove an account from the list of accounts", 0, .proc = remove_account },
-	{ "backup", "remove the active backup", 0, .proc = remove_backup },
-	{ "property", "remove the active backup", ARRLEN(removePropertyNodes), .subnodes = removePropertyNodes},
-};
-static const struct node infoNodes[] = {
-	{ "account", "shows information about an account", 0, .proc = info_account },
-};
-static const struct node listNodes[] = {
-	{ "accounts", "lists all accounts", 0, .proc = list_account },
-	{ "backup", "lists all accounts within the backup", 0, .proc = list_backup },
-};
-static const struct node nodes[] = {
-	{ "help", "shows help for a specific command", ARRLEN(helpNodes), .subnodes = helpNodes },
-	{ "add", "add an account or property", ARRLEN(addNodes), .subnodes = addNodes },
-	{ "remove", "remove an account", ARRLEN(removeNodes), .subnodes = removeNodes },
-	{ "info", "show information about an account", ARRLEN(infoNodes), .subnodes = infoNodes },
-	{ "tree", "shows a tree view of all commands", 0, .proc = tree },
-	{ "list", "shows a specific list", ARRLEN(listNodes), .subnodes = listNodes },
-	{ "clear", "clears the screen", 0, .proc = cmd_clear },
-	{ "quit", "quit the program", 0, .proc = cmd_quit },
-	{ "exit", "exit the program (same as quit)", 0, .proc = cmd_quit },
-};
-static const struct node root[] = {
-	{ NULL, NULL, ARRLEN(nodes), .subnodes = nodes },
-};
 
 static void
 appendrealpath(const char *app, U32 nApp)
@@ -108,7 +33,7 @@ appendrealpath(const char *app, U32 nApp)
 }
 
 void
-add_account(const struct node *node, struct value *values)
+add_account(const struct branch *branch, struct value *values)
 {
 	char *name;
 	U32 nName;
@@ -116,6 +41,12 @@ add_account(const struct node *node, struct value *values)
 
 	name = values[0].word;
 	nName = values[0].nWord;
+	if(nName > MAX_NAME)
+	{
+		attrset(ATTR_ERROR);
+		printw("\nAccount name is not allowed to exceed %u bytes", MAX_NAME);
+		return;
+	}
 	appendrealpath(name, nName);
 	if(!access(path, F_OK))
 	{
@@ -127,16 +58,20 @@ add_account(const struct node *node, struct value *values)
 	if(fd == ERR)
 	{
 		attrset(ATTR_ERROR);
-		printw("\nUnable to create the file inside '%s' (%s)", realPath, strerror(errno));
+		printw("\nUnable to create file inside '%s' (%s)", realPath, strerror(errno));
 		return;
 	}
 	close(fd);
 	attrset(ATTR_LOG);
 	printw("\nCreated new account inside '%s'", path);
+	write(fdBackup, &(char) { BACKUP_ENTRY_ADDACCOUNT }, 1);
+	write(fdBackup, &(time_t) { time(NULL) }, sizeof(time_t));
+	write(fdBackup, name, nName);
+	write(fdBackup, &(char) { 0 }, 1);
 }
 
 void
-add_property(const struct node *node, struct value *values)
+add_property(const struct branch *branch, struct value *values)
 {
 	char *propName;
 	U32 nPropName;
@@ -147,6 +82,12 @@ add_property(const struct node *node, struct value *values)
 
 	propName = values[0].word;
 	nPropName = values[0].nWord;
+	if(nPropName > MAX_NAME)
+	{
+		attrset(ATTR_ERROR);
+		printw("\nProperty name is not allowed to exceed %u bytes", MAX_NAME);
+		return;
+	}
 	accName = values[1].word;
 	nAccName = values[1].nWord;
 	appendrealpath(accName, nAccName);
@@ -215,10 +156,18 @@ add_property(const struct node *node, struct value *values)
 	close(fd);
 	attrset(ATTR_LOG);
 	printw("\nWritten '%.*s' to account '%.*s'", values[2].nString, values[2].string, nAccName, accName);
+	write(fdBackup, &(char) { BACKUP_ENTRY_ADDPROPERTY }, 1);
+	write(fdBackup, &(time_t) { time(NULL) }, sizeof(time_t));
+	write(fdBackup, propName, nPropName);
+	write(fdBackup, &(char) { 0 }, 1);
+	write(fdBackup, accName, nAccName);
+	write(fdBackup, &(char) { 0 }, 1);
+	write(fdBackup, values[2].string, values[2].nString);
+	write(fdBackup, &(char) { 0 }, 1);
 }
 
 void
-remove_property(const struct node *node, struct value *values)
+remove_property(const struct branch *branch, struct value *values)
 {
 	char *propName;
 	U32 nPropName;
@@ -315,6 +264,12 @@ remove_property(const struct node *node, struct value *values)
 	remove(tmpPath);
 	attrset(ATTR_LOG);
 	printw("\nRemoved property '%.*s' from account '%.*s'", nPropName, propName, nAccName, accName);
+	write(fdBackup, &(char) { BACKUP_ENTRY_REMOVEPROPERTY }, 1);
+	write(fdBackup, &(time_t) { time(NULL) }, sizeof(time_t));
+	write(fdBackup, propName, nPropName);
+	write(fdBackup, &(char) { 0 }, 1);
+	write(fdBackup, accName, nAccName);
+	write(fdBackup, &(char) { 0 }, 1);
 	return;
 corrupt:
 	close(fdTmp);
@@ -325,7 +280,7 @@ corrupt:
 }
 
 void
-remove_account(const struct node *node, struct value *values)
+remove_account(const struct branch *branch, struct value *values)
 {
 	char *name;
 	U32 nName;
@@ -342,16 +297,41 @@ remove_account(const struct node *node, struct value *values)
 	{
 		attrset(ATTR_LOG);
 		printw("\nSuccessfully removed account '%.*s'", nName, name);
+		write(fdBackup, &(char) { BACKUP_ENTRY_REMOVEACCOUNT }, 1);
+		write(fdBackup, &(time_t) { time(NULL) }, sizeof(time_t));
+		write(fdBackup, name, nName);
+		write(fdBackup, &(char) { 0 }, 1);
 	}
 }
 
 void
-remove_backup(const struct node *node, struct value *values)
+remove_backup(const struct branch *branch, struct value *values)
 {
+	int ans;
+
+	attrset(ATTR_LOG);
+	printw("\nAre you sure you want to remove the backup? [Yn]");
+	ans = getch();
+	if(ans != 'Y')
+	{
+		printw("\nCancelled removal of backup");
+		return;
+	}
+	appendrealpath(".backup", sizeof(".backup") - 1);
+	if(remove(path))
+	{
+		attrset(ATTR_ERROR);
+		printw("\nFailed to remove backup (%s)", strerror(errno));
+	}
+	else
+	{
+		attrset(ATTR_LOG);
+		printw("\nBackup was removed");
+	}
 }
 
 void
-info_account(const struct node *node, struct value *values)
+info_account(const struct branch *branch, struct value *values)
 {
 	char *accName;
 	U32 nAccName;
@@ -409,19 +389,143 @@ corrupt:
 	printw("\nFile '%s/%.*s' is corrupt", realPath, nAccName, accName);
 }
 
-void
-help(const struct node *node, struct value *values)
+void info_backup(const struct branch *branch, struct value *values)
 {
-	attrset(ATTR_HIGHLIGHT);
-	printw("\n%s", node->name);
-	attrset(ATTR_DEFAULT);
-	printw("\n\t%s", node->description);
+	ssize_t nRead;
+	char *ptr;
+
+	if(lseek(fdBackup, 0, SEEK_SET))
+	{
+		attrset(ATTR_ERROR);
+		printw("\nUnable to read backup file (%s)", strerror(errno));
+		return;
+	}
+	path[sizeof(path) - 1] = 0;
+	nRead = read(fdBackup, path, sizeof(path) - 1);
+	while(nRead > 0)
+	{
+		U32 l;
+		U8 id;
+		time_t time;
+		struct tm *tm;
+
+		ptr = path;
+		id = *(ptr++);
+		time = *(time_t*) ptr;
+		tm = localtime(&time);
+		ptr += sizeof(time_t);
+		nRead -= sizeof(time_t) + 1;
+		l = strlen(path);
+		if(l >= nRead)
+		{
+			printw("\nCorrupt backup file, you must manually fix it ('help backup fix' for more info)");
+			break;
+		}
+		l++;
+		nRead -= l;
+		switch(id)
+		{
+		case BACKUP_ENTRY_ADDACCOUNT:
+			attrset(ATTR_ADD);
+			printw("\nAdded account '%s'", ptr);
+			ptr += l;
+			break;
+		case BACKUP_ENTRY_REMOVEACCOUNT:
+			attrset(ATTR_SUB);
+			printw("\nRemoved account '%s'", ptr);
+			ptr += l;
+			break;
+		case BACKUP_ENTRY_ADDPROPERTY:
+			attrset(ATTR_ADD);
+			printw("\nAdded property '%s'", ptr);
+			ptr += l;
+			printw(" from account '%s'", ptr);
+			nRead -= strlen(path) + 1;
+			ptr += strlen(path) + 1;
+			printw(" with value '%s'", ptr);
+			break;
+		case BACKUP_ENTRY_REMOVEPROPERTY:
+			attrset(ATTR_SUB);
+			printw("\nRemoved property '%s'", ptr);
+			ptr += l;
+			printw(" from account '%s'", ptr);
+			nRead -= strlen(path) + 1;
+			ptr += strlen(path) + 1;
+			break;
+		}
+		attrset(ATTR_LOG);
+		printw("\t\t%s", asctime(tm));
+		memmove(path, ptr, nRead);
+		nRead += read(fdBackup, path + nRead, sizeof(path) - 1 - nRead);
+	}
 }
 
 void
-tree_print(const struct node *branch, U32 depth)
+help(const struct branch *helpBranch, struct input *input)
 {
-	for(const struct node *s = branch->subnodes, *e = s + branch->nSubnodes; s != e; s++)
+	static const struct {
+		const char *name;
+		const char *info;
+	} general_infos[] = {
+		{ "accounts", "accounts are combinations of data like password username, dob that make up an online presence" },
+		{ "backups", "backups are local files that store all actions you performs" },
+		{ "tree", "shows a tree view of all commands" },
+	};
+	const struct branch *branch;
+	struct value value;
+	TOKEN *tok;
+
+	/*static const struct branch helpBackupNodes[] = {
+		{ "fix", "if the backup file is corrupt; it may have occured because a write was interrupted"
+			"\nThis might've been caused by a power outage"
+			"\nTo manually manage the backup and fix it, use the 'backup ...' commands", 0, .proc = void_proc },
+	};*/
+	if((tok = peektoken(input, &value)) && tok->type == TWORD)
+	{
+		for(U32 i = 0; i < ARRLEN(general_infos); i++)
+			if(!strncmp(general_infos[i].name, value.word, value.nWord) &&
+					!general_infos[i].name[value.nWord])
+			{
+				attrset(ATTR_LOG);
+				printw("\nINFO: %s", general_infos[i].info);
+				return;
+			}
+	}
+	branch = root;
+	while(hasnexttoken(input) && (branch = nextbranch(branch, input)));
+	if(branch)
+	{
+		if(!branch->description)
+		{ // this means we stayed in root
+			attrset(ATTR_LOG);
+			addstr("\nPassword manager " VERSION);
+			attrset(ATTR_DEFAULT);
+			addstr("\nUse this as a manager for your accounts; you can do that by entering commands like help."
+					" Commands are based on a 'branch' system, meaning a series of commands follows a specific branch; type 'tree' to visualize the available command tree."
+					" Some commands also expect tokens right after it, for instance 'account' needs a name(word) argument."
+					"\nFor more information put any of these words afer 'help'"
+				);
+			for(U32 i = 0; i < ARRLEN(general_infos); i++)
+			{
+				attrset(ATTR_DEFAULT);
+				addstr("\n\thelp ");
+				attrset(ATTR_HIGHLIGHT);
+				addstr(general_infos[i].name);
+			}
+
+		}
+		else
+		{
+			attrset(ATTR_LOG);
+			printw("\n%s", branch->description);
+		}
+	}
+}
+
+void
+tree_print(const struct branch *branch, U32 depth)
+{
+	for(const struct branch *s = branch->subnodes, *e = s + branch->nSubnodes; s != e; s++)
 	{
 		if(branch->nSubnodes == 1)
 			printw(" ");
@@ -440,8 +544,8 @@ tree_print(const struct node *branch, U32 depth)
 				printw(" %s", dependencies[i].description);
 				break;
 			}
-		attrset(0);
-		if(s->nSubnodes)
+		attrset(ATTR_DEFAULT);
+		if(!IS_EXEC_BRANCH(s))
 			tree_print(s, depth + 1);
 		else
 			printw(" %s", s->description);
@@ -449,13 +553,13 @@ tree_print(const struct node *branch, U32 depth)
 }
 
 void
-tree(const struct node *node, struct value *values)
+tree(const struct branch *branch, struct value *values)
 {
 	tree_print(root, 0);
 }
 
 void
-list_account(const struct node *node, struct value *values)
+list_account(const struct branch *branch, struct value *values)
 {
 	DIR *dir;
 	struct dirent *dirent;
@@ -470,19 +574,16 @@ list_account(const struct node *node, struct value *values)
 	closedir(dir);
 }
 
-void list_backup(const struct node *node, struct value *values)
-{
-}
-
 void
-cmd_quit(const struct node *node, struct value *values)
+cmd_quit(const struct branch *branch, struct value *values)
 {
+	close(fdBackup);
 	endwin();
 	exit(0);
 }
 
 void
-cmd_clear(const struct node *node, struct value *values)
+cmd_clear(const struct branch *branch, struct value *values)
 {
 	clear();
 }
@@ -506,22 +607,32 @@ main(void)
 	keypad(stdscr, true);
 	scrollok(stdscr, true);
 
-	start_color();
-	init_pair(1, COLOR_GREEN, COLOR_BLACK);
-	init_pair(2, COLOR_MAGENTA, COLOR_BLACK);
-	init_pair(3, COLOR_RED, COLOR_BLACK);
-	init_pair(4, COLOR_CYAN, COLOR_BLACK);
-	init_pair(5, COLOR_YELLOW, COLOR_BLACK);
-
-	attrset(ATTR_LOG);
-	printw("Starting setup...");
-
+	addstr("Doing setup...");
+	addstr("\nChecking for color support...");
+	if(has_colors())
+	{
+		start_color();
+		init_pair(1, COLOR_GREEN, COLOR_BLACK);
+		init_pair(2, COLOR_MAGENTA, COLOR_BLACK);
+		init_pair(3, COLOR_RED, COLOR_BLACK);
+		init_pair(4, COLOR_CYAN, COLOR_BLACK);
+		init_pair(5, COLOR_YELLOW, COLOR_BLACK);
+		init_pair(6, COLOR_GREEN, COLOR_BLACK);
+		init_pair(7, COLOR_RED, COLOR_BLACK);
+		attrset(ATTR_ADD);
+		addstr(" SUCCESS");
+	}
+	else
+	{
+		addstr(" FAILED");
+	}
 	if(!homePath)
 	{
-		attrset(ATTR_ERROR);
-		printw("\nSetup failed: Enviroment variable HOME is not set!");
+		attrset(ATTR_FATAL);
+		addstr("\nSetup failed: Enviroment variable HOME is not set!");
 		goto err;
 	}
+	attrset(ATTR_LOG);
 	printw("\nHome path is '%s'", homePath);
 	strcpy(path, homePath);
 	strcat(path, "/Passwords");
@@ -529,150 +640,82 @@ main(void)
 	printw("\nThe real path is '%s'", realPath);
 	if(mkdir(realPath, 0700))
 	{
-		if(errno == EACCES)
+		if(errno != EEXIST)
 		{
-			attrset(ATTR_ERROR);
-			printw("\nSetup failed: Write permission denied!");
-			goto err;
-		}
-		else if(errno != EEXIST)
-		{
-			attrset(ATTR_ERROR);
-			printw("\nSetup failed: Could not open real path directory!");
+			attrset(ATTR_FATAL);
+			printw("\nSetup failed: Could not create real path directory (%s)", strerror(errno));
 			goto err;
 		}
 	}
 	appendrealpath(".backup", sizeof(".backup") - 1);
 	printw("\nOpening backup file '%s'...", path);
-	fdBackup = open(path, O_CREAT | O_APPEND | O_WRONLY, S_IWUSR | S_IRUSR); 
+	fdBackup = open(path, O_CREAT | O_APPEND | O_RDWR, S_IWUSR | S_IRUSR); 
 	if(fdBackup == ERR)
 	{
 		attrset(ATTR_FATAL);
-		printw("\nCouldn't open backup file");
+		addstr(" FAILED!");
 		attrset(ATTR_LOG);
 	}
 	else
 	{
-		printw("\nBackup file successfully opened");
+		attrset(ATTR_ADD);
+		addstr(" SUCCESS");
+		attrset(ATTR_LOG);
 	}
-	printw("\nChecking for UTF-8 support...");
+	addstr("\nChecking for UTF-8 support...");
 	isUtf8 = locale && strstr(locale, "UTF-8");
-	printw("\n%s", isUtf8 ? "UTF-8 is supported" : "UTF-8 is not supported");
-	printw("\nSetup complete!\n");
-	attrset(ATTR_SPECIAL);
-	printw("\nPassword manager unstable version 1");
+	attrset(isUtf8 ? ATTR_ADD : ATTR_SUB);
+	printw(" UTF-8 is %ssupported", isUtf8 ? "" : "not ");
+	attrset(ATTR_ADD);
+	addstr("\nSetup complete!"
+			"\n\nPassword manager" VERSION);
 	list_account(NULL, NULL);
-	while(1)
+get_input: // while(1) IN GOTO WE TRUST
 	{
 		TOKEN *tok;
-		const struct node *branch;
-		const struct node *newBranch;
+		const struct branch *branch;
 		struct value value;
 		struct value values[10];
 		U32 nValues = 0;
 
-		void printpossibilities(void)
-		{
-			attrset(ATTR_DEFAULT);
-			printw("\nPossible options are:");
-			for(U32 i = 0; i < branch->nSubnodes; i++)
-			{
-				attrset(ATTR_HIGHLIGHT);
-				printw("\n\t%s", branch->subnodes[i].name);
-				for(U32 i = 0; i < ARRLEN(dependencies); i++)
-					if(!strcmp(dependencies[i].name, branch->subnodes[i].name))
-					{
-						attron(A_ITALIC);
-						printw(" %s", dependencies[i].description);
-						break;
-					}
-				attrset(ATTR_DEFAULT);
-				printw("\t%s", branch->subnodes[i].description);
-			}
-		}
-
 		addch('\n');
 		if(getinput(&input, isUtf8))
-			continue;
+			goto get_input;
 		branch = root;
-		while((tok = nexttoken(&input, &value)))
+		while(1)
 		{
-			const char *word;
-			U32 l = 0;
-			U32 i;
-
-			switch(tok->type)
+			if(!hasnexttoken(&input))
 			{
-			case TWORD: word = value.word; l = value.nWord; break;
-			case TPLUS: word = "add"; l = 3; break;
-			case TMINUS: word = "remove"; l = 6; break;	
-			case TCOLON: word = "account"; l = 7; break;
-			case TQUESTION: word = "info"; l = 4; break;
-			case TEQU: word = "value"; l = 5; break;
-			case TAT: word = "property"; l = 8; break;
-			default:
 				attrset(ATTR_ERROR);
-				addch('\n');
-				for(U32 i = 0; i < tok->pos; i++)
-					addch(' ');
-				addstr("^\nInvalid token");
-				word = NULL;
-			}
-			if(!word)
-			{
-				branch = NULL;
+				printw("\nBranch '%s' needs more options", branch->name);
+				printoptions(branch);
 				break;
 			}
-			for(i = 0; i < ARRLEN(dependencies); i++)
-				if(strlen(dependencies[i].name) == l && !memcmp(dependencies[i].name, word, l))
+			if(!(branch = nextbranch(branch, &input)))
+				break;
+			// check if the branch has any dependencies and get them
+			for(U32 i = 0; i < ARRLEN(dependencies); i++)
+				if(!strcmp(dependencies[i].name, branch->name))
 				{
 					if(!(tok = nexttoken(&input, &value)) || tok->type != dependencies[i].token)
 					{
 						attrset(ATTR_ERROR);
-						printw("\nExpected %s after '%.*s'", dependencies[i].description, l, word);
-						i = -1;
-						branch = NULL;
-						break;
+						printw("\nExpected %s after '%s'", dependencies[i].description, branch->name);
+						goto get_input;
 					}
 					values[nValues++] = value;
 					break;
 				}
-			if((I32) i == -1)
-				break;
-			newBranch = NULL;
-			for(i = 0; i < branch->nSubnodes; i++)
+			if(IS_EXEC_BRANCH(branch))
 			{
-				if(strlen(branch->subnodes[i].name) == l && !memcmp(branch->subnodes[i].name, word, l))
-				{
-					newBranch = branch->subnodes + i;
-					break;
-				}
-			}
-			if(!newBranch)
-			{
-				attrset(ATTR_ERROR);
-				if(branch->name)
-					printw("\nBranch '%s' doesn't have the option '%.*s'", branch->name, l, word);
+				if(branch->nSubnodes)
+					branch->special(branch, &input);
 				else
-					printw("\nBranch '%.*s' doesn't exist", l, word);
-				printpossibilities();
-				branch = NULL;
-				break;
-			}
-			branch = newBranch;
-			if(!branch->nSubnodes)
-			{
-				branch->proc(branch, values);
-				branch = NULL;
+					branch->proc(branch, values);
 				break;
 			}
 		}
-		if(branch)
-		{
-			attrset(ATTR_ERROR);
-			printw("\nNeed more options for branch '%s' (use 'tree' to get an overview of the commands)", branch->name);
-			printpossibilities();
-		}
+		goto get_input;
 	}
 err:
 	attrset(ATTR_FATAL);
