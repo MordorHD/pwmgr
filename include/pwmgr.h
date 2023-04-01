@@ -41,6 +41,11 @@ typedef int32_t I32;
 #define ATTR_SYNTAX_WORD (COLOR_PAIR(0))
 #define ATTR_SYNTAX_STRING (COLOR_PAIR(5) | A_DIM)
 
+extern WINDOW *out;
+
+// reads one input character from the out pad from given y and x position
+int getoutch(int y, int x);
+
 // backup entries
 // [id][time][additional information]
 // addition information can be:

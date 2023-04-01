@@ -18,6 +18,20 @@ const char *realPath;
 char path[1024];
 // open backup file
 int fdBackup;
+// output window
+WINDOW *out;
+
+int
+getoutch(int thenY, int thenX)
+{
+	int x, y;
+
+	getyx(out, y, x);
+	prefresh(out, MAX(y - LINES + 1, 0), 0, 0, 0, LINES - 1, COLS);
+	if(thenY != -1)
+		wmove(out, thenY, thenX);
+	return wgetch(out);
+}
 
 static void
 appendrealpath(const char *app, U32 nApp)
@@ -43,27 +57,27 @@ add_account(const struct branch *branch, struct value *values)
 	nName = values[0].nWord;
 	if(nName > MAX_NAME)
 	{
-		attrset(ATTR_ERROR);
-		printw("\nAccount name is not allowed to exceed %u bytes", MAX_NAME);
+		wattrset(out, ATTR_ERROR);
+		wprintw(out, "\nAccount name is not allowed to exceed %u bytes", MAX_NAME);
 		return;
 	}
 	appendrealpath(name, nName);
 	if(!access(path, F_OK))
 	{
-		attrset(ATTR_ERROR);
-		printw("\nAccount '%.*s' already exists", nName, name);
+		wattrset(out, ATTR_ERROR);
+		wprintw(out, "\nAccount '%.*s' already exists", nName, name);
 		return;
 	}
 	fd = open(path, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
 	if(fd == ERR)
 	{
-		attrset(ATTR_ERROR);
-		printw("\nUnable to create file inside '%s' (%s)", realPath, strerror(errno));
+		wattrset(out, ATTR_ERROR);
+		wprintw(out, "\nUnable to create file inside '%s' (%s)", realPath, strerror(errno));
 		return;
 	}
 	close(fd);
-	attrset(ATTR_LOG);
-	printw("\nCreated new account inside '%s'", path);
+	wattrset(out, ATTR_LOG);
+	wprintw(out, "\nCreated new account inside '%s'", path);
 	write(fdBackup, &(char) { BACKUP_ENTRY_ADDACCOUNT }, 1);
 	write(fdBackup, &(time_t) { time(NULL) }, sizeof(time_t));
 	write(fdBackup, name, nName);
@@ -84,8 +98,8 @@ add_property(const struct branch *branch, struct value *values)
 	nPropName = values[0].nWord;
 	if(nPropName > MAX_NAME)
 	{
-		attrset(ATTR_ERROR);
-		printw("\nProperty name is not allowed to exceed %u bytes", MAX_NAME);
+		wattrset(out, ATTR_ERROR);
+		wprintw(out, "\nProperty name is not allowed to exceed %u bytes", MAX_NAME);
 		return;
 	}
 	accName = values[1].word;
@@ -94,8 +108,8 @@ add_property(const struct branch *branch, struct value *values)
 	fd = open(path, O_RDWR | O_APPEND);
 	if(fd == ERR)
 	{
-		attrset(ATTR_ERROR);
-		printw("\nUnable to access '%s' (%s)", path, strerror(errno));
+		wattrset(out, ATTR_ERROR);
+		wprintw(out, "\nUnable to access '%s' (%s)", path, strerror(errno));
 		return;
 	}
 	path[sizeof(path) - 1] = 0;
@@ -110,15 +124,15 @@ add_property(const struct branch *branch, struct value *values)
 		nName = strlen(path);
 		if(nName > nRead)
 		{
-			attrset(ATTR_ERROR);
-			printw("\nFile '%s/%.*s' is corrupt (state: 0)", realPath, nAccName, accName);
+			wattrset(out, ATTR_ERROR);
+			wprintw(out, "\nFile '%s/%.*s' is corrupt (state: 0)", realPath, nAccName, accName);
 			close(fd);
 			return;
 		}
 		if(nName == nPropName && !memcmp(name, propName, nPropName))
 		{
-			attrset(ATTR_ERROR);
-			printw("\nProperty '%.*s' already exists", nPropName, propName);
+			wattrset(out, ATTR_ERROR);
+			wprintw(out, "\nProperty '%.*s' already exists", nPropName, propName);
 			close(fd);
 			return;
 		}
@@ -127,8 +141,8 @@ add_property(const struct branch *branch, struct value *values)
 		nRead += read(fd, path + nRead, sizeof(path) - 1 - nRead);
 		if(!nRead)
 		{
-			attrset(ATTR_ERROR);
-			printw("\nFile '%s/%.*s' is corrupt (state: 1)", realPath, nAccName, accName);
+			wattrset(out, ATTR_ERROR);
+			wprintw(out, "\nFile '%s/%.*s' is corrupt (state: 1)", realPath, nAccName, accName);
 			close(fd);
 			return;
 		}
@@ -139,8 +153,8 @@ add_property(const struct branch *branch, struct value *values)
 			nValue = strlen(path);
 			if(nValue > nRead)
 			{
-				attrset(ATTR_ERROR);
-				printw("\nFile '%s/%.*s' is corrupt (state: 2)", realPath, nAccName, accName);
+				wattrset(out, ATTR_ERROR);
+				wprintw(out, "\nFile '%s/%.*s' is corrupt (state: 2)", realPath, nAccName, accName);
 				close(fd);
 				return;
 			}
@@ -154,8 +168,8 @@ add_property(const struct branch *branch, struct value *values)
 	write(fd, values[2].string, values[2].nString);
 	write(fd, &(char) { 0 }, 1);
 	close(fd);
-	attrset(ATTR_LOG);
-	printw("\nWritten '%.*s' to account '%.*s'", values[2].nString, values[2].string, nAccName, accName);
+	wattrset(out, ATTR_LOG);
+	wprintw(out, "\nWritten '%.*s' to account '%.*s'", values[2].nString, values[2].string, nAccName, accName);
 	write(fdBackup, &(char) { BACKUP_ENTRY_ADDPROPERTY }, 1);
 	write(fdBackup, &(time_t) { time(NULL) }, sizeof(time_t));
 	write(fdBackup, propName, nPropName);
@@ -187,16 +201,16 @@ remove_property(const struct branch *branch, struct value *values)
 	fd = open(path, O_RDONLY);
 	if(fd == ERR)
 	{
-		attrset(ATTR_ERROR);
-		printw("\nUnable to open account '%.*s' (%s)", nAccName, accName, strerror(errno));
+		wattrset(out, ATTR_ERROR);
+		wprintw(out, "\nUnable to open account '%.*s' (%s)", nAccName, accName, strerror(errno));
 		return;
 	}
 	appendrealpath(".tmp", 4);
 	fdTmp = open(path, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
 	if(fdTmp == ERR)
 	{
-		attrset(ATTR_FATAL);
-		printw("\nUnable to create temporary file (%s)", strerror(errno));
+		wattrset(out, ATTR_FATAL);
+		wprintw(out, "\nUnable to create temporary file (%s)", strerror(errno));
 		close(fd);
 		return;
 	}
@@ -218,7 +232,7 @@ remove_property(const struct branch *branch, struct value *values)
 			goto corrupt;
 		if(nName == nPropName && !memcmp(name, propName, nPropName))
 		{
-			attrset(ATTR_ERROR);
+			wattrset(out, ATTR_ERROR);
 			removed = true;
 			ignoreWrite = true;	
 		}
@@ -250,20 +264,20 @@ remove_property(const struct branch *branch, struct value *values)
 	close(fd);
 	if(!removed)
 	{
-		attrset(ATTR_ERROR);
-		printw("\nProperty '%.*s' doesn't exist", nPropName, propName);
+		wattrset(out, ATTR_ERROR);
+		wprintw(out, "\nProperty '%.*s' doesn't exist", nPropName, propName);
 		return;
 	}
 	appendrealpath(accName, nAccName);
 	if(renameat2(AT_FDCWD, tmpPath, AT_FDCWD, path, RENAME_EXCHANGE))
 	{
-		attrset(ATTR_FATAL);
-		printw("\nFailed atomically swapping temporary file and new file (%s)", strerror(errno));
+		wattrset(out, ATTR_FATAL);
+		wprintw(out, "\nFailed atomically swapping temporary file and new file (%s)", strerror(errno));
 	}
 	close(fdTmp);
 	remove(tmpPath);
-	attrset(ATTR_LOG);
-	printw("\nRemoved property '%.*s' from account '%.*s'", nPropName, propName, nAccName, accName);
+	wattrset(out, ATTR_LOG);
+	wprintw(out, "\nRemoved property '%.*s' from account '%.*s'", nPropName, propName, nAccName, accName);
 	write(fdBackup, &(char) { BACKUP_ENTRY_REMOVEPROPERTY }, 1);
 	write(fdBackup, &(time_t) { time(NULL) }, sizeof(time_t));
 	write(fdBackup, propName, nPropName);
@@ -275,8 +289,8 @@ corrupt:
 	close(fdTmp);
 	remove(tmpPath);
 	close(fd);
-	attrset(ATTR_FATAL);
-	printw("\nFile '%s/%.*s' is corrupt", realPath, nAccName, accName);
+	wattrset(out, ATTR_FATAL);
+	wprintw(out, "\nFile '%s/%.*s' is corrupt", realPath, nAccName, accName);
 }
 
 void
@@ -290,13 +304,13 @@ remove_account(const struct branch *branch, struct value *values)
 	appendrealpath(name, nName);
 	if(remove(path))
 	{
-		attrset(ATTR_ERROR);
-		printw("\nCouldn't remove account '%.*s'", nName, name);
+		wattrset(out, ATTR_ERROR);
+		wprintw(out, "\nCouldn't remove account '%.*s'", nName, name);
 	}
 	else
 	{
-		attrset(ATTR_LOG);
-		printw("\nSuccessfully removed account '%.*s'", nName, name);
+		wattrset(out, ATTR_LOG);
+		wprintw(out, "\nSuccessfully removed account '%.*s'", nName, name);
 		write(fdBackup, &(char) { BACKUP_ENTRY_REMOVEACCOUNT }, 1);
 		write(fdBackup, &(time_t) { time(NULL) }, sizeof(time_t));
 		write(fdBackup, name, nName);
@@ -309,24 +323,24 @@ remove_backup(const struct branch *branch, struct value *values)
 {
 	int ans;
 
-	attrset(ATTR_LOG);
-	printw("\nAre you sure you want to remove the backup? [Yn]");
-	ans = getch();
+	wattrset(out, ATTR_LOG);
+	wprintw(out, "\nAre you sure you want to remove the backup? [Yn]");
+	ans = getoutch(-1, 0);
 	if(ans != 'Y')
 	{
-		printw("\nCancelled removal of backup");
+		wprintw(out, "\nCancelled removal of backup");
 		return;
 	}
 	appendrealpath(".backup", sizeof(".backup") - 1);
 	if(remove(path))
 	{
-		attrset(ATTR_ERROR);
-		printw("\nFailed to remove backup (%s)", strerror(errno));
+		wattrset(out, ATTR_ERROR);
+		wprintw(out, "\nFailed to remove backup (%s)", strerror(errno));
 	}
 	else
 	{
-		attrset(ATTR_LOG);
-		printw("\nBackup was removed");
+		wattrset(out, ATTR_LOG);
+		wprintw(out, "\nBackup was removed");
 	}
 }
 
@@ -344,11 +358,11 @@ info_account(const struct branch *branch, struct value *values)
 	fd = open(path, O_RDONLY);
 	if(fd == ERR)
 	{
-		attrset(ATTR_ERROR);
-		printw("\nCouldn't open account '%.*s' ('%s')", nAccName, accName, strerror(errno));
+		wattrset(out, ATTR_ERROR);
+		wprintw(out, "\nCouldn't open account '%.*s' ('%s')", nAccName, accName, strerror(errno));
 		return;
 	}
-	attrset(ATTR_LOG);
+	wattrset(out, ATTR_LOG);
 	path[sizeof(path) - 1] = 0;
 	nRead = read(fd, path, sizeof(path) - 1);
 	while(nRead > 0)
@@ -361,21 +375,21 @@ info_account(const struct branch *branch, struct value *values)
 		nName = strlen(path);
 		if(nName > nRead)
 			goto corrupt;
-		printw("\n%.*s = ", nName, name);
+		wprintw(out, "\n%.*s = ", nName, name);
 		nRead -= nName + 1;
 		memcpy(path, path + nName + 1, nRead);
 		nRead += read(fd, path + nRead, sizeof(path) - 1 - nRead);
 		if(!nRead)
 			goto corrupt;
 		nValue = strlen(path);
-		printw("%.*s", nValue, path);
+		wprintw(out, "%.*s", nValue, path);
 		while(nValue == sizeof(path) - 1)
 		{
 			nRead = read(fd, path, sizeof(path) - 1);
 			nValue = strlen(path);
 			if(nValue > nRead)
 				goto corrupt;
-			printw("%.*s", nValue, path);
+			wprintw(out, "%.*s", nValue, path);
 		}
 		nRead -= nValue + 1;
 		memcpy(path, path + nValue + 1, nRead);
@@ -385,19 +399,20 @@ info_account(const struct branch *branch, struct value *values)
 	return;
 corrupt:
 	close(fd);
-	attrset(ATTR_ERROR);
-	printw("\nFile '%s/%.*s' is corrupt", realPath, nAccName, accName);
+	wattrset(out, ATTR_ERROR);
+	wprintw(out, "\nFile '%s/%.*s' is corrupt", realPath, nAccName, accName);
 }
 
 void info_backup(const struct branch *branch, struct value *values)
 {
 	ssize_t nRead;
 	char *ptr;
+	U32 iEvent = 1;
 
 	if(lseek(fdBackup, 0, SEEK_SET))
 	{
-		attrset(ATTR_ERROR);
-		printw("\nUnable to read backup file (%s)", strerror(errno));
+		wattrset(out, ATTR_ERROR);
+		wprintw(out, "\nUnable to read backup file (%s)", strerror(errno));
 		return;
 	}
 	path[sizeof(path) - 1] = 0;
@@ -408,56 +423,76 @@ void info_backup(const struct branch *branch, struct value *values)
 		U8 id;
 		time_t time;
 		struct tm *tm;
+		char strTime[100];
 
 		ptr = path;
 		id = *(ptr++);
 		time = *(time_t*) ptr;
-		tm = localtime(&time);
 		ptr += sizeof(time_t);
 		nRead -= sizeof(time_t) + 1;
-		l = strlen(path);
+		l = strlen(ptr);
 		if(l >= nRead)
-		{
-			printw("\nCorrupt backup file, you must manually fix it ('help backup fix' for more info)");
-			break;
-		}
+			goto corrupt;
+		wattrset(out, ATTR_LOG);
+		wprintw(out, "\n%u - ", iEvent++);
 		l++;
 		nRead -= l;
 		switch(id)
 		{
 		case BACKUP_ENTRY_ADDACCOUNT:
-			attrset(ATTR_ADD);
-			printw("\nAdded account '%s'", ptr);
+			wattrset(out, ATTR_ADD);
+			wprintw(out, "Added account '%s'", ptr);
 			ptr += l;
 			break;
 		case BACKUP_ENTRY_REMOVEACCOUNT:
-			attrset(ATTR_SUB);
-			printw("\nRemoved account '%s'", ptr);
+			wattrset(out, ATTR_SUB);
+			wprintw(out, "Removed account '%s'", ptr);
 			ptr += l;
 			break;
 		case BACKUP_ENTRY_ADDPROPERTY:
-			attrset(ATTR_ADD);
-			printw("\nAdded property '%s'", ptr);
+			wattrset(out, ATTR_ADD);
+			wprintw(out, "Added property '%s'", ptr);
 			ptr += l;
-			printw(" from account '%s'", ptr);
-			nRead -= strlen(path) + 1;
-			ptr += strlen(path) + 1;
-			printw(" with value '%s'", ptr);
+			wprintw(out, " from account '%s'", ptr);
+			l = strlen(ptr) + 1;
+			nRead -= l;
+			ptr += l;
+			waddstr(out, " with value '");
+			memmove(path, ptr, nRead);
+			nRead += read(fdBackup, path + nRead, sizeof(path) - 1 - nRead);
+			waddstr(out, path);
+			while(strlen(path) == sizeof(path) - 1)
+			{
+				nRead = read(fdBackup, path, sizeof(path) - 1);
+				if(strlen(path) > nRead)
+					goto corrupt;
+				waddstr(out, path);
+			}
+			l = strlen(path) + 1;
+			nRead -= l;
+			ptr = path + l;
 			break;
 		case BACKUP_ENTRY_REMOVEPROPERTY:
-			attrset(ATTR_SUB);
-			printw("\nRemoved property '%s'", ptr);
+			wattrset(out, ATTR_SUB);
+			wprintw(out, "Removed property '%s'", ptr);
 			ptr += l;
-			printw(" from account '%s'", ptr);
-			nRead -= strlen(path) + 1;
-			ptr += strlen(path) + 1;
+			wprintw(out, " from account '%s'", ptr);
+			l = strlen(ptr) + 1;
+			nRead -= l;
+			ptr += l;
 			break;
 		}
-		attrset(ATTR_LOG);
-		printw("\t\t%s", asctime(tm));
+		wattrset(out, ATTR_LOG);
+		tm = localtime(&time);
+		strftime(strTime, sizeof(strTime), "%F %r", tm);
+		wprintw(out, "\t%s", strTime);
 		memmove(path, ptr, nRead);
 		nRead += read(fdBackup, path + nRead, sizeof(path) - 1 - nRead);
 	}
+	return;
+corrupt:
+	wattrset(out, ATTR_ERROR);
+	waddstr(out, "\nCorrupt backup file, you must manually fix it ('help backup fix' for more info)");
 }
 
 void
@@ -486,8 +521,8 @@ help(const struct branch *helpBranch, struct input *input)
 			if(!strncmp(general_infos[i].name, value.word, value.nWord) &&
 					!general_infos[i].name[value.nWord])
 			{
-				attrset(ATTR_LOG);
-				printw("\nINFO: %s", general_infos[i].info);
+				wattrset(out, ATTR_LOG);
+				wprintw(out, "\nINFO: %s", general_infos[i].info);
 				return;
 			}
 	}
@@ -497,27 +532,27 @@ help(const struct branch *helpBranch, struct input *input)
 	{
 		if(!branch->description)
 		{ // this means we stayed in root
-			attrset(ATTR_LOG);
-			addstr("\nPassword manager " VERSION);
-			attrset(ATTR_DEFAULT);
-			addstr("\nUse this as a manager for your accounts; you can do that by entering commands like help."
+			wattrset(out, ATTR_LOG);
+			waddstr(out, "\nPassword manager " VERSION);
+			wattrset(out, ATTR_DEFAULT);
+			waddstr(out, "\nUse this as a manager for your accounts; you can do that by entering commands like help."
 					" Commands are based on a 'branch' system, meaning a series of commands follows a specific branch; type 'tree' to visualize the available command tree."
 					" Some commands also expect tokens right after it, for instance 'account' needs a name(word) argument."
 					"\nFor more information put any of these words afer 'help'"
 				);
 			for(U32 i = 0; i < ARRLEN(general_infos); i++)
 			{
-				attrset(ATTR_DEFAULT);
-				addstr("\n\thelp ");
-				attrset(ATTR_HIGHLIGHT);
-				addstr(general_infos[i].name);
+				wattrset(out, ATTR_DEFAULT);
+				waddstr(out, "\n\thelp ");
+				wattrset(out, ATTR_HIGHLIGHT);
+				waddstr(out, general_infos[i].name);
 			}
 
 		}
 		else
 		{
-			attrset(ATTR_LOG);
-			printw("\n%s", branch->description);
+			wattrset(out, ATTR_LOG);
+			wprintw(out, "\n%s", branch->description);
 		}
 	}
 }
@@ -528,27 +563,27 @@ tree_print(const struct branch *branch, U32 depth)
 	for(const struct branch *s = branch->subnodes, *e = s + branch->nSubnodes; s != e; s++)
 	{
 		if(branch->nSubnodes == 1)
-			printw(" ");
+			wprintw(out, " ");
 		else
 		{
-			printw("\n");
+			wprintw(out, "\n");
 			for(U32 i = 0; i < depth; i++)
-				printw(" |");
+				wprintw(out, " |");
 		}
-		attrset(A_BOLD);
-		printw("%s", s->name);
+		wattrset(out, A_BOLD);
+		wprintw(out, "%s", s->name);
 		for(U32 i = 0; i < ARRLEN(dependencies); i++)
 			if(!strcmp(dependencies[i].name, s->name))
 			{
 				attron(A_ITALIC);
-				printw(" %s", dependencies[i].description);
+				wprintw(out, " %s", dependencies[i].description);
 				break;
 			}
-		attrset(ATTR_DEFAULT);
+		wattrset(out, ATTR_DEFAULT);
 		if(!IS_EXEC_BRANCH(s))
 			tree_print(s, depth + 1);
 		else
-			printw(" %s", s->description);
+			wprintw(out, " %s", s->description);
 	}
 }
 
@@ -567,10 +602,10 @@ list_account(const struct branch *branch, struct value *values)
 	dir = opendir(realPath);
 	if(!dir)
 		return;
-	attrset(ATTR_LOG);
+	wattrset(out, ATTR_LOG);
 	while((dirent = readdir(dir)))
 		if(dirent->d_type == DT_REG && dirent->d_name[0] != '.')
-			printw("\n\t%s", dirent->d_name);
+			wprintw(out, "\n\t%s", dirent->d_name);
 	closedir(dir);
 }
 
@@ -585,7 +620,7 @@ cmd_quit(const struct branch *branch, struct value *values)
 void
 cmd_clear(const struct branch *branch, struct value *values)
 {
-	clear();
+	wclear(out);
 }
 
 int
@@ -604,11 +639,12 @@ main(void)
 	raw();
 	noecho();
 	
-	keypad(stdscr, true);
-	scrollok(stdscr, true);
+	out = newpad(200, COLS);
+	keypad(out, true);
+	scrollok(out, true);
 
-	addstr("Doing setup...");
-	addstr("\nChecking for color support...");
+	waddstr(out, "Doing setup...");
+	waddstr(out, "\nChecking for color support...");
 	if(has_colors())
 	{
 		start_color();
@@ -619,55 +655,55 @@ main(void)
 		init_pair(5, COLOR_YELLOW, COLOR_BLACK);
 		init_pair(6, COLOR_GREEN, COLOR_BLACK);
 		init_pair(7, COLOR_RED, COLOR_BLACK);
-		attrset(ATTR_ADD);
-		addstr(" SUCCESS");
+		wattrset(out, ATTR_ADD);
+		waddstr(out, " SUCCESS");
 	}
 	else
 	{
-		addstr(" FAILED");
+		waddstr(out, " FAILED");
 	}
 	if(!homePath)
 	{
-		attrset(ATTR_FATAL);
-		addstr("\nSetup failed: Enviroment variable HOME is not set!");
+		wattrset(out, ATTR_FATAL);
+		waddstr(out, "\nSetup failed: Enviroment variable HOME is not set!");
 		goto err;
 	}
-	attrset(ATTR_LOG);
-	printw("\nHome path is '%s'", homePath);
+	wattrset(out, ATTR_LOG);
+	wprintw(out, "\nHome path is '%s'", homePath);
 	strcpy(path, homePath);
 	strcat(path, "/Passwords");
 	realPath = realpath(path, NULL);
-	printw("\nThe real path is '%s'", realPath);
+	wprintw(out, "\nThe real path is '%s'", realPath);
 	if(mkdir(realPath, 0700))
 	{
 		if(errno != EEXIST)
 		{
-			attrset(ATTR_FATAL);
-			printw("\nSetup failed: Could not create real path directory (%s)", strerror(errno));
+			wattrset(out, ATTR_FATAL);
+			wprintw(out, "\nSetup failed: Could not create real path directory (%s)", strerror(errno));
 			goto err;
 		}
 	}
 	appendrealpath(".backup", sizeof(".backup") - 1);
-	printw("\nOpening backup file '%s'...", path);
+	wprintw(out, "\nOpening backup file '%s'...", path);
 	fdBackup = open(path, O_CREAT | O_APPEND | O_RDWR, S_IWUSR | S_IRUSR); 
 	if(fdBackup == ERR)
 	{
-		attrset(ATTR_FATAL);
-		addstr(" FAILED!");
-		attrset(ATTR_LOG);
+		wattrset(out, ATTR_FATAL);
+		waddstr(out, " FAILED!");
+		wattrset(out, ATTR_LOG);
 	}
 	else
 	{
-		attrset(ATTR_ADD);
-		addstr(" SUCCESS");
-		attrset(ATTR_LOG);
+		wattrset(out, ATTR_ADD);
+		waddstr(out, " SUCCESS");
+		wattrset(out, ATTR_LOG);
 	}
-	addstr("\nChecking for UTF-8 support...");
+	waddstr(out, "\nChecking for UTF-8 support...");
 	isUtf8 = locale && strstr(locale, "UTF-8");
-	attrset(isUtf8 ? ATTR_ADD : ATTR_SUB);
-	printw(" UTF-8 is %ssupported", isUtf8 ? "" : "not ");
-	attrset(ATTR_ADD);
-	addstr("\nSetup complete!"
+	wattrset(out, isUtf8 ? ATTR_ADD : ATTR_SUB);
+	wprintw(out, " UTF-8 is %ssupported", isUtf8 ? "" : "not ");
+	wattrset(out, ATTR_ADD);
+	waddstr(out, "\nSetup complete!"
 			"\n\nPassword manager" VERSION);
 	list_account(NULL, NULL);
 get_input: // while(1) IN GOTO WE TRUST
@@ -678,7 +714,8 @@ get_input: // while(1) IN GOTO WE TRUST
 		struct value values[10];
 		U32 nValues = 0;
 
-		addch('\n');
+		// input will "render" our output pad
+		waddch(out, '\n');
 		if(getinput(&input, isUtf8))
 			goto get_input;
 		branch = root;
@@ -686,8 +723,8 @@ get_input: // while(1) IN GOTO WE TRUST
 		{
 			if(!hasnexttoken(&input))
 			{
-				attrset(ATTR_ERROR);
-				printw("\nBranch '%s' needs more options", branch->name);
+				wattrset(out, ATTR_ERROR);
+				wprintw(out, "\nBranch '%s' needs more options", branch->name);
 				printoptions(branch);
 				break;
 			}
@@ -699,8 +736,8 @@ get_input: // while(1) IN GOTO WE TRUST
 				{
 					if(!(tok = nexttoken(&input, &value)) || tok->type != dependencies[i].token)
 					{
-						attrset(ATTR_ERROR);
-						printw("\nExpected %s after '%s'", dependencies[i].description, branch->name);
+						wattrset(out, ATTR_ERROR);
+						wprintw(out, "\nExpected %s after '%s'", dependencies[i].description, branch->name);
 						goto get_input;
 					}
 					values[nValues++] = value;
@@ -718,9 +755,9 @@ get_input: // while(1) IN GOTO WE TRUST
 		goto get_input;
 	}
 err:
-	attrset(ATTR_FATAL);
-	printw("\nAn unexpected error occured, press any key to exit...");
-	getch();
+	wattrset(out, ATTR_FATAL);
+	waddstr(out, "\nAn unexpected error occured, press any key to exit...");
+	wgetch(out);
 	endwin();
 	return ERR;
 }

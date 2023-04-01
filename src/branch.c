@@ -2,7 +2,7 @@
 
 void void_proc(const struct branch *branch, struct value *values)
 {
-	printw("\nThis command has no specific function");
+	wprintw(out, "\nThis command has no specific function");
 }
 // these are all defined inside of src/main.c
 void help(const struct branch *branch, struct input *input);
@@ -62,21 +62,21 @@ const struct branch *const root = _root;
 void
 printoptions(const struct branch *branch)
 {
-	attrset(ATTR_LOG);
-	printw("\nPossible options are:");
+	wattrset(out, ATTR_LOG);
+	wprintw(out, "\nPossible options are:");
 	for(U32 i = 0; i < branch->nSubnodes; i++)
 	{
-		attrset(ATTR_HIGHLIGHT);
-		printw("\n\t%s", branch->subnodes[i].name);
+		wattrset(out, ATTR_HIGHLIGHT);
+		wprintw(out, "\n\t%s", branch->subnodes[i].name);
 		for(U32 i = 0; i < ARRLEN(dependencies); i++)
 			if(!strcmp(dependencies[i].name, branch->subnodes[i].name))
 			{
-				attron(A_ITALIC);
-				printw(" %s", dependencies[i].description);
+				wattron(out, A_ITALIC);
+				wprintw(out, " %s", dependencies[i].description);
 				break;
 			}
-		attrset(ATTR_DEFAULT);
-		printw("\t%s", branch->subnodes[i].description);
+		wattrset(out, ATTR_DEFAULT);
+		wprintw(out, "\t%s", branch->subnodes[i].description);
 	}
 }
 
@@ -99,11 +99,11 @@ nextbranch(const struct branch *branch, struct input *input)
 	case TEQU: word = "value"; nWord = 5; break;
 	case TAT: word = "property"; nWord = 8; break;
 	default:
-		attrset(ATTR_ERROR);
-		addch('\n');
+		wattrset(out, ATTR_ERROR);
+		waddch(out, '\n');
 		for(U32 i = 0; i < tok->pos; i++)
-			addch(' ');
-		addstr("^\nInvalid token");
+			waddch(out, ' ');
+		waddstr(out, "^\nInvalid token");
 		return NULL;
 	}
 	for(U32 i = 0; i < branch->nSubnodes; i++)
@@ -116,11 +116,11 @@ nextbranch(const struct branch *branch, struct input *input)
 	}
 	if(!newBranch)
 	{
-		attrset(ATTR_ERROR);
+		wattrset(out, ATTR_ERROR);
 		if(branch->name)
-			printw("\nBranch '%s' doesn't have the option '%.*s'", branch->name, nWord, word);
+			wprintw(out, "\nBranch '%s' doesn't have the option '%.*s'", branch->name, nWord, word);
 		else
-			printw("\nBranch '%.*s' doesn't exist", nWord, word);
+			wprintw(out, "\nBranch '%.*s' doesn't exist", nWord, word);
 		printoptions(branch);
 		return NULL;
 	}
