@@ -20,14 +20,26 @@ char path[1024];
 int fdBackup;
 // output window
 WINDOW *out;
+int outArea = 200 * 200;
+int iPage;
 
 int
 getoutch(int thenY, int thenX)
 {
 	int x, y;
+	int sx;
+	int pageSize;
 
 	getyx(out, y, x);
-	prefresh(out, MAX(y - LINES + 1, 0), 0, 0, 0, LINES - 1, COLS);
+	pageSize = MAX(LINES / 2, 1);
+	sx = y - LINES + 1 - iPage * pageSize;
+
+	while(iPage && sx + pageSize <= 0)
+	{
+		sx += pageSize;
+		iPage--;
+	}
+	prefresh(out, MAX(sx, 0), 0, 0, 0, LINES - 1, COLS);
 	if(thenY != -1)
 		wmove(out, thenY, thenX);
 	return wgetch(out);
@@ -47,6 +59,93 @@ appendrealpath(const char *app, U32 nApp)
 }
 
 void
+set(const struct branch *branch, struct value *values)
+{
+	char *name;
+	U32 nName;
+	char *value;
+	U32 nValue;
+	struct variable *var;
+	I64 iVal;
+
+	name = values[0].word;
+	nName = values[0].nWord;
+	value = values[1].string;
+	nValue = values[1].nString;
+	var = getvariable(name, nName);
+	if(!var)
+	{
+		int option;
+		void *val;
+
+		wattrset(out, ATTR_LOG);
+		wprintw(out, "\nVariable '%.*s' doesn't exist, do you want to create it? [yn]", nName, name);
+		if(getoutch(-1, 0) != 'y')
+		{
+			wattrset(out, ATTR_LOG);
+			waddstr(out, "\nCreation of variable cancelled");
+			return;
+		}
+		wattrset(out, ATTR_DEFAULT);
+		waddstr(out, "\nWhat type should the variable be?\n1) U32 (unsigned integer)\n2) I32 (signed integer)\n3) String");
+		option = getoutch(-1, 0);
+		option -= '1';
+		if(option < 0 || option >= VARTYPE_MAX)
+		{
+			wattrset(out, ATTR_LOG);
+			waddstr(out, "\nCreation of variable cancelled");
+			return;
+		}
+		switch(option)
+		{
+		case VARTYPE_U32:
+			iVal = strtoll(value, NULL, 0); 
+			val = malloc(sizeof(U32));
+			*(U32*) val = iVal;
+			break;
+		case VARTYPE_I32:
+			iVal = strtoll(value, NULL, 0); 
+			val = malloc(sizeof(I32));
+			*(I32*) val = iVal;
+			break;
+		case VARTYPE_STRING:
+			val = strndup(value, nValue);
+			break;
+		default:
+			wprintw(out, "\nDevnote: You forgot to update this");
+			return;
+		}
+		addvariable(&(struct variable) { option, strndup(name, nName), val });
+		attrset(ATTR_LOG);
+		wprintw(out, "\nVariable '%.*s' created!", nName, name);
+		return;
+	}
+	switch(var->type)
+	{
+	case VARTYPE_U32:
+		iVal = strtoll(value, NULL, 0); 
+		if(iVal < 0)
+		{
+			wattrset(out, ATTR_ERROR);
+			wprintw(out, "\nNegative number is not allowed for variable '%.*s'", nName, name);
+			return;
+		}
+		*(U32*) var->value = iVal;
+		break;
+	case VARTYPE_I32:
+		iVal = strtoll(value, NULL, 0); 
+		*(I32*) var->value = iVal;
+		break;
+	case VARTYPE_STRING:
+		free(var->value);
+		var->value = strndup(value, nValue);
+		break;
+	default:
+		wprintw(out, "\nDevnote: You forgot to update this");
+	}
+}
+
+void
 add_account(const struct branch *branch, struct value *values)
 {
 	char *name;
@@ -55,12 +154,6 @@ add_account(const struct branch *branch, struct value *values)
 
 	name = values[0].word;
 	nName = values[0].nWord;
-	if(nName > MAX_NAME)
-	{
-		wattrset(out, ATTR_ERROR);
-		wprintw(out, "\nAccount name is not allowed to exceed %u bytes", MAX_NAME);
-		return;
-	}
 	appendrealpath(name, nName);
 	if(!access(path, F_OK))
 	{
@@ -96,12 +189,6 @@ add_property(const struct branch *branch, struct value *values)
 
 	propName = values[0].word;
 	nPropName = values[0].nWord;
-	if(nPropName > MAX_NAME)
-	{
-		wattrset(out, ATTR_ERROR);
-		wprintw(out, "\nProperty name is not allowed to exceed %u bytes", MAX_NAME);
-		return;
-	}
 	accName = values[1].word;
 	nAccName = values[1].nWord;
 	appendrealpath(accName, nAccName);
@@ -453,7 +540,7 @@ void info_backup(const struct branch *branch, struct value *values)
 			wattrset(out, ATTR_ADD);
 			wprintw(out, "Added property '%s'", ptr);
 			ptr += l;
-			wprintw(out, " from account '%s'", ptr);
+			wprintw(out, " to account '%s'", ptr);
 			l = strlen(ptr) + 1;
 			nRead -= l;
 			ptr += l;
@@ -503,7 +590,7 @@ help(const struct branch *helpBranch, struct input *input)
 		const char *info;
 	} general_infos[] = {
 		{ "accounts", "accounts are combinations of data like password username, dob that make up an online presence" },
-		{ "backups", "backups are local files that store all actions you performs" },
+		{ "backups", "backups are local files that store all actions you perform" },
 		{ "tree", "shows a tree view of all commands" },
 	};
 	const struct branch *branch;
@@ -522,7 +609,7 @@ help(const struct branch *helpBranch, struct input *input)
 					!general_infos[i].name[value.nWord])
 			{
 				wattrset(out, ATTR_LOG);
-				wprintw(out, "\nINFO: %s", general_infos[i].info);
+				wprintw(out, "\n%s", general_infos[i].info);
 				return;
 			}
 	}
@@ -639,7 +726,7 @@ main(void)
 	raw();
 	noecho();
 	
-	out = newpad(200, COLS);
+	out = newpad(*(U32*) getvariable("area", 4)->value / COLS, COLS);
 	keypad(out, true);
 	scrollok(out, true);
 

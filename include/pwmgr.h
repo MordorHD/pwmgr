@@ -22,9 +22,12 @@
 	_a > _b ? _b : _a; \
 })
 
+typedef int8_t I8;
 typedef uint8_t U8;
-typedef uint32_t U32;
 typedef int32_t I32;
+typedef uint32_t U32;
+typedef int64_t I64;
+typedef uint64_t U64;
 
 #define MAX_NAME 64
 
@@ -42,9 +45,26 @@ typedef int32_t I32;
 #define ATTR_SYNTAX_STRING (COLOR_PAIR(5) | A_DIM)
 
 extern WINDOW *out;
+extern int iPage;
 
 // reads one input character from the out pad from given y and x position
 int getoutch(int y, int x);
+
+enum {
+	VARTYPE_U32,
+	VARTYPE_I32,
+	VARTYPE_STRING,
+	VARTYPE_MAX,
+};
+
+struct variable {
+	U32 type;
+	const char *name;
+	void *value;
+};
+
+void addvariable(const struct variable *var);
+struct variable *getvariable(const char *name, U32 nName);
 
 // backup entries
 // [id][time][additional information]
@@ -121,6 +141,7 @@ static const struct {
 	{ "account", "name", TWORD },
 	{ "property", "name", TWORD },
 	{ "value", "string", TSTRING },
+	{ "set", "name", TWORD },
 };
 #define IS_EXEC_BRANCH(branch) (!(branch)->nSubnodes || (I32) (branch)->nSubnodes == -1)
 struct branch {

@@ -1,0 +1,38 @@
+#include "pwmgr.h"
+
+static U32 area = 200 * 200;
+
+static struct variable *variables;
+static U32 nVariables;
+
+static void __attribute__((constructor))
+init(void)
+{
+	static const struct variable builtin_variables[] = {
+		{ VARTYPE_U32, "area", &area },
+	};
+	
+	variables = malloc(sizeof(builtin_variables));
+	nVariables = ARRLEN(builtin_variables);
+	memcpy(variables, builtin_variables, sizeof(builtin_variables));
+}
+
+void
+addvariable(const struct variable *var)
+{
+	variables = realloc(variables, sizeof(*variables) * (nVariables + 1));
+	variables[nVariables++] = *var;
+}
+
+struct variable *
+getvariable(const char *name, U32 nName)
+{
+	for(U32 v = 0; v < nVariables; v++)
+	{
+		if(!strncmp(variables[v].name, name, nName)
+				&& !variables[v].name[nName])
+			return variables + v;
+	}
+	return NULL;
+}
+

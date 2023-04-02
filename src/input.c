@@ -14,8 +14,7 @@ renderinput(struct input *input, U32 iBuf, U32 nBuf, int x, int y, int *pCurX, i
 	// erase input
 	wattrset(out, ATTR_DEFAULT);
 	wmove(out, y, 0);
-	for(int i = 0, n = (LINES - y - 1) * COLS + COLS - 1; i < n; i++)
-		waddch(out, ' ');
+	wclrtobot(out);
 	wmove(out, y, x);
 	input->buf[nBuf] = 0;
 	err = tokenize(input);
@@ -107,6 +106,7 @@ getinput(struct input *input, bool isUtf8)
 			U32 nUtf8 = 1;
 			U32 headUtf8 = ch;
 
+			iPage = 0;
 			bUtf8[0] = ch;
 			if(headUtf8 & 0x80)
 			{
@@ -126,7 +126,7 @@ getinput(struct input *input, bool isUtf8)
 			iBuf += nUtf8;
 			nBuf += nUtf8;
 			// check if scrolling will occur
-			if(cy == LINES - 1 && cx == COLS - 1)
+			if(cy == getmaxy(out) - 1 && cx == COLS - 1)
 			{
 				wscrl(out, 1);
 				y--;
@@ -137,13 +137,23 @@ getinput(struct input *input, bool isUtf8)
 		}
 		switch(ch)
 		{
+		case KEY_PPAGE:
+			iPage++;
+			break;
+		case KEY_NPAGE:
+			if(iPage)
+				iPage--;
+			break;
 		case KEY_HOME:
+			iPage = 0;
 			iBuf = 0;
 			break;
 		case KEY_END:
+			iPage = 0;
 			iBuf = nBuf;
 			break;
 		case KEY_LEFT:
+			iPage = 0;
 			if(iBuf)
 			{
 				iBuf--;
@@ -152,6 +162,7 @@ getinput(struct input *input, bool isUtf8)
 			}
 			break;
 		case KEY_RIGHT:
+			iPage = 0;
 			if(iBuf < nBuf)
 			{
 				iBuf++;
@@ -160,6 +171,7 @@ getinput(struct input *input, bool isUtf8)
 			}
 			break;
 		case KEY_BACKSPACE:
+			iPage = 0;
 			if(iBuf)
 			{
 				U32 nRem = 1;
@@ -175,6 +187,7 @@ getinput(struct input *input, bool isUtf8)
 			}
 			break;
 		case KEY_DC:
+			iPage = 0;
 			if(iBuf != nBuf)
 			{
 				U32 nRem = 1;
@@ -186,6 +199,7 @@ getinput(struct input *input, bool isUtf8)
 			}
 			break;
 		case KEY_UP:
+			iPage = 0;
 			if(curHistory)
 			{
 				if(curHistory == nextHistory)
@@ -203,6 +217,7 @@ getinput(struct input *input, bool isUtf8)
 			}
 			break;
 		case KEY_DOWN:
+			iPage = 0;
 		{
 			U32 l = 0;
 

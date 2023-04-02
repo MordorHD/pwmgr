@@ -6,6 +6,7 @@ void void_proc(const struct branch *branch, struct value *values)
 }
 // these are all defined inside of src/main.c
 void help(const struct branch *branch, struct input *input);
+void set(const struct branch *branch, struct value *values);
 void add_account(const struct branch *branch, struct value *values);
 void add_property(const struct branch *branch, struct value *values);
 void remove_account(const struct branch *branch, struct value *values);
@@ -18,6 +19,9 @@ void list_account(const struct branch *branch, struct value *values);
 void cmd_quit(const struct branch *branch, struct value *values);
 void cmd_clear(const struct branch *branch, struct value *values);
 
+static const struct branch setNodes[] = {
+	{ "value", "possible values are", 0, .proc = set },
+};
 static const struct branch addPropertyAccountNodes[] = {
 	{ "value", "set a specific value (\"value\")", 0, .proc = add_property },
 };
@@ -45,6 +49,7 @@ static const struct branch listNodes[] = {
 };
 static const struct branch nodes[] = {
 	{ "help", "shows help for a specific command", -1, .special = help },
+	{ "set", "set a system variable (options are: area)", ARRLEN(setNodes), .subnodes = setNodes },
 	{ "add", "add an account or property", ARRLEN(addNodes), .subnodes = addNodes },
 	{ "remove", "remove an account", ARRLEN(removeNodes), .subnodes = removeNodes },
 	{ "info", "show information about an account", ARRLEN(infoNodes), .subnodes = infoNodes },
@@ -98,6 +103,7 @@ nextbranch(const struct branch *branch, struct input *input)
 	case TQUESTION: word = "info"; nWord = 4; break;
 	case TEQU: word = "value"; nWord = 5; break;
 	case TAT: word = "property"; nWord = 8; break;
+	case TDOT: word = "set"; nWord = 3; break;
 	default:
 		wattrset(out, ATTR_ERROR);
 		waddch(out, '\n');
