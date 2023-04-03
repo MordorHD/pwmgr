@@ -47,21 +47,15 @@ typedef uint64_t U64;
 extern WINDOW *out;
 extern int iPage;
 
-// reads one input character from the out pad from given y and x position
-int getoutch(int y, int x);
-
-enum {
-	VARTYPE_U32,
-	VARTYPE_I32,
-	VARTYPE_STRING,
-	VARTYPE_MAX,
-};
+void setoutpage(int page);
 
 struct variable {
-	U32 type;
-	const char *name;
-	void *value;
+	char *name;
+	char *value;
 };
+
+extern U32 area;
+extern U32 inputHeight;
 
 void addvariable(const struct variable *var);
 struct variable *getvariable(const char *name, U32 nName);
@@ -78,24 +72,11 @@ enum {
 	BACKUP_ENTRY_REMOVEPROPERTY,
 };
 
-enum {
-	TERROR,
-	ESPACE,
-	EMAX,
-	ZQUOTEBEGIN, ZQUOTEESCAPE,
-	ZMAX,
-	// literals
-	TWORD, TSTRING,
-	// special characters
-	TCOLON, TDOT, TCOMMA,
-	TPERCENT, TEXCLAM, TQUESTION, THASH, TAT,
-	TPLUS, TMINUS, TEQU,
-};
-
 struct value {
 	U32 pos;
 	U32 type;
 	union {
+		I64 number;
 		struct {
 			U32 nWord;
 			char *word;
@@ -107,21 +88,30 @@ struct value {
 	};
 };
 
+enum {
+	TERROR,
+	ESPACE,
+	EMAX,
+	ZQUOTEBEGIN, ZQUOTEESCAPE,
+	ZMAX,
+	// literals
+	TWORD, TSTRING, TNUMBER,
+	// special characters
+	TCOLON, TDOT, TCOMMA,
+	TPERCENT, TEXCLAM, TQUESTION, THASH, TAT,
+	TPLUS, TMINUS, TEQU,
+};
+
 typedef struct {
 	U32 type;
 	U32 pos;
 } TOKEN;
 
-struct input;
-
-int tokenize(struct input *input);
-bool hasnexttoken(struct input *input);
-TOKEN *peektoken(struct input *input, struct value *value);
-TOKEN *nexttoken(struct input *input, struct value *value);
-U32 gettokenlen(struct input *input, U32 token);
+#define MAX_INPUT 0x1000
 
 struct input {
-	char buf[0x1000];
+	WINDOW *win;
+	char *buf;
 	U32 nBuf;
 	U32 nextHistory;
 	char history[0x8000];
@@ -132,6 +122,11 @@ struct input {
 };
 
 int getinput(struct input *input, bool isUtf8);
+int tokenize(struct input *input);
+bool hasnexttoken(struct input *input);
+TOKEN *peektoken(struct input *input, struct value *value);
+TOKEN *nexttoken(struct input *input, struct value *value);
+U32 gettokenlen(struct input *input, U32 token);
 
 static const struct {
 	const char *name;
@@ -140,7 +135,7 @@ static const struct {
 } dependencies[] = {
 	{ "account", "name", TWORD },
 	{ "property", "name", TWORD },
-	{ "value", "string", TSTRING },
+	{ "value", "string|number", 0 },
 	{ "set", "name", TWORD },
 };
 #define IS_EXEC_BRANCH(branch) (!(branch)->nSubnodes || (I32) (branch)->nSubnodes == -1)

@@ -1,7 +1,7 @@
 #include "pwmgr.h"
 
 int
-renderinput(struct input *input, U32 iBuf, U32 nBuf, int x, int y, int *pCurX, int *pCurY)
+renderinput(struct input *input, U32 iBuf, U32 nBuf)
 {
 	int cy, cx;
 	int err;
@@ -9,13 +9,10 @@ renderinput(struct input *input, U32 iBuf, U32 nBuf, int x, int y, int *pCurX, i
 	U32 tokenLen;
 
 	// measure cursor position
-	mvwaddnstr(out, y, x, input->buf, iBuf);
-	getyx(out, cy, cx);
+	mvwaddnstr(input->win, 0, 0, input->buf, iBuf);
+	getyx(input->win, cy, cx);
 	// erase input
-	wattrset(out, ATTR_DEFAULT);
-	wmove(out, y, 0);
-	wclrtobot(out);
-	wmove(out, y, x);
+	werase(input->win);
 	input->buf[nBuf] = 0;
 	err = tokenize(input);
 	for(U32 i = 0, nTokens = input->nTokens; i < nTokens; i++)
@@ -25,22 +22,18 @@ renderinput(struct input *input, U32 iBuf, U32 nBuf, int x, int y, int *pCurX, i
 		tok = input->tokens + i;
 		if(last)
 		{
-			wattrset(out, ATTR_DEFAULT);
-			waddnstr(out, input->buf + last->pos + tokenLen, tok->pos - last->pos - tokenLen);
+			wattrset(input->win, ATTR_DEFAULT);
+			waddnstr(input->win, input->buf + last->pos + tokenLen, tok->pos - last->pos - tokenLen);
 		}
 		switch(tok->type)
 		{
-		case TWORD:
-			wattrset(out, ATTR_SYNTAX_WORD);
-			break;
-		case TSTRING:
-			wattrset(out, ATTR_SYNTAX_STRING);
-			break;
+		case TWORD: wattrset(input->win, ATTR_SYNTAX_WORD); break;
+		case TSTRING: wattrset(input->win, ATTR_SYNTAX_STRING); break;
 		default:
-			wattrset(out, ATTR_SYNTAX_KEYWORD);
+			wattrset(input->win, ATTR_SYNTAX_KEYWORD);
 		}
 		tokenLen = gettokenlen(input, i);
-		waddnstr(out, input->buf + tok->pos, tokenLen);
+		waddnstr(input->win, input->buf + tok->pos, tokenLen);
 		last = tok;
 	}
 	if(err)
@@ -50,14 +43,13 @@ renderinput(struct input *input, U32 iBuf, U32 nBuf, int x, int y, int *pCurX, i
 		pos = input->errPos;
 		if(last)
 		{
-			wattrset(out, ATTR_DEFAULT);
-			waddnstr(out, input->buf + last->pos + tokenLen, pos - last->pos - tokenLen);
+			wattrset(input->win, ATTR_DEFAULT);
+			waddnstr(input->win, input->buf + last->pos + tokenLen, pos - last->pos - tokenLen);
 		}
-		wattrset(out, ATTR_ERROR);
-		waddnstr(out, input->buf + pos, nBuf - pos);
+		wattrset(input->win, ATTR_ERROR);
+		waddnstr(input->win, input->buf + pos, nBuf - pos);
 	}
-	*pCurX = cx;
-	*pCurY = cy;
+	wmove(input->win, cy, cx);
 	return err;
 }
 
@@ -65,12 +57,9 @@ int
 getinput(struct input *input, bool isUtf8)
 {
 	char *buf;
-	char saveBuf[sizeof(input->buf)];
-	U32 maxBuf;
+	char saveBuf[MAX_INPUT];
 	U32 iBuf, nBuf;
-	int x, y;
 	char *history;
-	U32 maxHistory;
 	U32 nextHistory;
 	I32 overflowHistory;
 	U32 curHistory;
@@ -79,25 +68,20 @@ getinput(struct input *input, bool isUtf8)
 
 	input->nBuf = 0;
 	buf = input->buf;
-	maxBuf = sizeof(input->buf);
 	iBuf = 0;
 	nBuf = 0;
 	history = input->history;
-	maxHistory = sizeof(input->history);
 	nextHistory = input->nextHistory;
 	curHistory = nextHistory;
-
-	getyx(out, y, x);
 	while(1)
 	{
-		int cx, cy, ex, ey, ch;
+		int ch;
 
-		tokErr = renderinput(input, iBuf, nBuf, x, y, &cx, &cy);
-		getyx(out, ey, ex);
-		ch = getoutch(cy, cx);
+		tokErr = renderinput(input, iBuf, nBuf);
+		ch = wgetch(input->win);
 		if(ch == '\n')
 		{
-			wmove(out, ey, ex);
+			wclear(input->win);
 			break;
 		}
 		if(ch >= 0x20 && ((ch <= 0xFF && isUtf8) || ch < 0x7F))
@@ -106,7 +90,6 @@ getinput(struct input *input, bool isUtf8)
 			U32 nUtf8 = 1;
 			U32 headUtf8 = ch;
 
-			iPage = 0;
 			bUtf8[0] = ch;
 			if(headUtf8 & 0x80)
 			{
@@ -116,21 +99,15 @@ getinput(struct input *input, bool isUtf8)
 				while(headUtf8 & mask)
 				{
 					mask >>= 1;
-					bUtf8[nUtf8++] = wgetch(out);
+					bUtf8[nUtf8++] = wgetch(input->win);
 				}
 			}
-			if(nBuf + nUtf8 >= maxBuf)
+			if(nBuf + nUtf8 >= MAX_INPUT)
 				continue;
 			memmove(buf + iBuf + nUtf8, buf + iBuf, nBuf - iBuf);
 			memcpy(buf + iBuf, bUtf8, nUtf8);
 			iBuf += nUtf8;
 			nBuf += nUtf8;
-			// check if scrolling will occur
-			if(cy == getmaxy(out) - 1 && cx == COLS - 1)
-			{
-				wscrl(out, 1);
-				y--;
-			}
 			// this is so the save buf can be updated at the next call of up
 			curHistory = nextHistory;
 			continue;
@@ -138,22 +115,18 @@ getinput(struct input *input, bool isUtf8)
 		switch(ch)
 		{
 		case KEY_PPAGE:
-			iPage++;
+			setoutpage(iPage + 1);
 			break;
 		case KEY_NPAGE:
-			if(iPage)
-				iPage--;
+			setoutpage(iPage - 1);
 			break;
 		case KEY_HOME:
-			iPage = 0;
 			iBuf = 0;
 			break;
 		case KEY_END:
-			iPage = 0;
 			iBuf = nBuf;
 			break;
 		case KEY_LEFT:
-			iPage = 0;
 			if(iBuf)
 			{
 				iBuf--;
@@ -162,7 +135,6 @@ getinput(struct input *input, bool isUtf8)
 			}
 			break;
 		case KEY_RIGHT:
-			iPage = 0;
 			if(iBuf < nBuf)
 			{
 				iBuf++;
@@ -171,7 +143,6 @@ getinput(struct input *input, bool isUtf8)
 			}
 			break;
 		case KEY_BACKSPACE:
-			iPage = 0;
 			if(iBuf)
 			{
 				U32 nRem = 1;
@@ -187,7 +158,6 @@ getinput(struct input *input, bool isUtf8)
 			}
 			break;
 		case KEY_DC:
-			iPage = 0;
 			if(iBuf != nBuf)
 			{
 				U32 nRem = 1;
@@ -199,7 +169,6 @@ getinput(struct input *input, bool isUtf8)
 			}
 			break;
 		case KEY_UP:
-			iPage = 0;
 			if(curHistory)
 			{
 				if(curHistory == nextHistory)
@@ -217,7 +186,6 @@ getinput(struct input *input, bool isUtf8)
 			}
 			break;
 		case KEY_DOWN:
-			iPage = 0;
 		{
 			U32 l = 0;
 
@@ -254,7 +222,7 @@ getinput(struct input *input, bool isUtf8)
 	}
 	if(!curHistory || strcmp(history + lastHistory, buf))
 	{
-		overflowHistory = nextHistory - maxHistory + nBuf + 1 + 1; // +1 for null terminator and +1 for extra space needed by the next history cursor
+		overflowHistory = nextHistory - sizeof(input->history) + nBuf + 1 + 1; // +1 for null terminator and +1 for extra space needed by the next history cursor
 		if(overflowHistory > 0)
 		{
 			const U32 l = overflowHistory + strlen(history + overflowHistory) + 1;

@@ -20,29 +20,28 @@ char path[1024];
 int fdBackup;
 // output window
 WINDOW *out;
-int outArea = 200 * 200;
 int iPage;
+// input window
+struct input input;
 
-int
-getoutch(int thenY, int thenX)
+void
+setoutpage(int page)
 {
-	int x, y;
-	int sx;
-	int pageSize;
+	int x, y, sx, pageSize;
+	const int outSize = LINES - inputHeight;
 
+	if(page < 0)
+		return;
 	getyx(out, y, x);
-	pageSize = MAX(LINES / 2, 1);
-	sx = y - LINES + 1 - iPage * pageSize;
-
-	while(iPage && sx + pageSize <= 0)
+	pageSize = MAX(outSize / 2, 1);
+	sx = y - outSize + 1 - page * pageSize;
+	while(page && sx + pageSize <= 0)
 	{
 		sx += pageSize;
-		iPage--;
+		page--;
 	}
-	prefresh(out, MAX(sx, 0), 0, 0, 0, LINES - 1, COLS);
-	if(thenY != -1)
-		wmove(out, thenY, thenX);
-	return wgetch(out);
+	iPage = page;
+	prefresh(out, MAX(sx, 0), 0, 0, 0, outSize, COLS);
 }
 
 static void
@@ -75,73 +74,51 @@ set(const struct branch *branch, struct value *values)
 	var = getvariable(name, nName);
 	if(!var)
 	{
-		int option;
-		void *val;
-
 		wattrset(out, ATTR_LOG);
 		wprintw(out, "\nVariable '%.*s' doesn't exist, do you want to create it? [yn]", nName, name);
-		if(getoutch(-1, 0) != 'y')
+		setoutpage(0);
+		if(wgetch(out) != 'y')
 		{
 			wattrset(out, ATTR_LOG);
 			waddstr(out, "\nCreation of variable cancelled");
 			return;
 		}
-		wattrset(out, ATTR_DEFAULT);
-		waddstr(out, "\nWhat type should the variable be?\n1) U32 (unsigned integer)\n2) I32 (signed integer)\n3) String");
-		option = getoutch(-1, 0);
-		option -= '1';
-		if(option < 0 || option >= VARTYPE_MAX)
-		{
-			wattrset(out, ATTR_LOG);
-			waddstr(out, "\nCreation of variable cancelled");
-			return;
-		}
-		switch(option)
-		{
-		case VARTYPE_U32:
-			iVal = strtoll(value, NULL, 0); 
-			val = malloc(sizeof(U32));
-			*(U32*) val = iVal;
-			break;
-		case VARTYPE_I32:
-			iVal = strtoll(value, NULL, 0); 
-			val = malloc(sizeof(I32));
-			*(I32*) val = iVal;
-			break;
-		case VARTYPE_STRING:
-			val = strndup(value, nValue);
-			break;
-		default:
-			wprintw(out, "\nDevnote: You forgot to update this");
-			return;
-		}
-		addvariable(&(struct variable) { option, strndup(name, nName), val });
+		addvariable(&(struct variable) { strndup(name, nName), strndup(value, nValue) });
 		attrset(ATTR_LOG);
 		wprintw(out, "\nVariable '%.*s' created!", nName, name);
 		return;
 	}
-	switch(var->type)
+	if(var->value)
 	{
-	case VARTYPE_U32:
-		iVal = strtoll(value, NULL, 0); 
-		if(iVal < 0)
-		{
-			wattrset(out, ATTR_ERROR);
-			wprintw(out, "\nNegative number is not allowed for variable '%.*s'", nName, name);
-			return;
-		}
-		*(U32*) var->value = iVal;
-		break;
-	case VARTYPE_I32:
-		iVal = strtoll(value, NULL, 0); 
-		*(I32*) var->value = iVal;
-		break;
-	case VARTYPE_STRING:
 		free(var->value);
 		var->value = strndup(value, nValue);
-		break;
-	default:
-		wprintw(out, "\nDevnote: You forgot to update this");
+	}
+	else if(!strcmp(var->name, "area"))
+	{
+		WINDOW *newOut;
+
+		iVal = strtoll(value, NULL, 0);
+		area = iVal;
+		if(area / COLS <= LINES)
+			area = COLS * LINES;
+		newOut = newpad(area / COLS, COLS);
+		overwrite(out, newOut);
+		delwin(out);
+		out = newOut;
+		scrollok(out, true);
+	}
+	else if(!strcmp(var->name, "inputHeight"))
+	{
+		iVal = strtoll(value, NULL, 0);
+		if(!iVal)
+		{
+			wattrset(out, ATTR_ERROR);
+			wprintw(out, "\nThe input height can't be 0");
+			return;
+		}
+		inputHeight = MIN(iVal, MAX(LINES / 2, 1));
+		input.win = newwin(inputHeight, COLS, LINES - inputHeight, 0);
+		keypad(input.win, true);
 	}
 }
 
@@ -412,7 +389,7 @@ remove_backup(const struct branch *branch, struct value *values)
 
 	wattrset(out, ATTR_LOG);
 	wprintw(out, "\nAre you sure you want to remove the backup? [Yn]");
-	ans = getoutch(-1, 0);
+	wgetch(out);
 	if(ans != 'Y')
 	{
 		wprintw(out, "\nCancelled removal of backup");
@@ -589,6 +566,10 @@ help(const struct branch *helpBranch, struct input *input)
 		const char *name;
 		const char *info;
 	} general_infos[] = {
+		{ "variables", "variables can be set using the 'set' command. Availabe variables are:"
+			"\n\tarea\t\tArea of the output window"
+			"\n\tinputHeight\tHeight of the input window"
+	   		"\nYou may also set your own variables using 'set'" },
 		{ "accounts", "accounts are combinations of data like password username, dob that make up an online presence" },
 		{ "backups", "backups are local files that store all actions you perform" },
 		{ "tree", "shows a tree view of all commands" },
@@ -657,13 +638,12 @@ tree_print(const struct branch *branch, U32 depth)
 			for(U32 i = 0; i < depth; i++)
 				wprintw(out, " |");
 		}
-		wattrset(out, A_BOLD);
+		wattrset(out, ATTR_HIGHLIGHT);
 		wprintw(out, "%s", s->name);
 		for(U32 i = 0; i < ARRLEN(dependencies); i++)
 			if(!strcmp(dependencies[i].name, s->name))
 			{
-				attron(A_ITALIC);
-				wprintw(out, " %s", dependencies[i].description);
+				wprintw(out, " [%s]", dependencies[i].description);
 				break;
 			}
 		wattrset(out, ATTR_DEFAULT);
@@ -691,7 +671,7 @@ list_account(const struct branch *branch, struct value *values)
 		return;
 	wattrset(out, ATTR_LOG);
 	while((dirent = readdir(dir)))
-		if(dirent->d_type == DT_REG && dirent->d_name[0] != '.')
+		if(dirent->d_type == DT_REG && !strchr(dirent->d_name, '.'))
 			wprintw(out, "\n\t%s", dirent->d_name);
 	closedir(dir);
 }
@@ -699,7 +679,14 @@ list_account(const struct branch *branch, struct value *values)
 void
 cmd_quit(const struct branch *branch, struct value *values)
 {
+	int fd;
+
 	close(fdBackup);
+	appendrealpath(".history", 8);
+	fd = open(path, O_WRONLY | O_CREAT, S_IWUSR | S_IRUSR);
+	write(fd, &input.nextHistory, sizeof(input.nextHistory));
+	write(fd, input.history, sizeof(input.history));
+	close(fd);
 	endwin();
 	exit(0);
 }
@@ -716,18 +703,19 @@ main(void)
 	bool isUtf8;
 	char *locale;
 	const char * const homePath = getenv("HOME");
-	struct input input;
+	int fd;
 
-	memset(&input, 0, sizeof(input));
 	locale = setlocale(LC_ALL, "");
 
 	initscr();
-
 	raw();
 	noecho();
 	
-	out = newpad(*(U32*) getvariable("area", 4)->value / COLS, COLS);
-	keypad(out, true);
+	input.win = newwin(inputHeight, COLS, LINES - inputHeight, 0);
+	keypad(input.win, true);
+	input.buf = malloc(MAX_INPUT);
+
+	out = newpad(area / COLS, COLS);
 	scrollok(out, true);
 
 	waddstr(out, "Doing setup...");
@@ -770,6 +758,14 @@ main(void)
 			goto err;
 		}
 	}
+	appendrealpath(".history", sizeof(".history") - 1);
+	fd = open(path, O_RDONLY);
+	if(fd != ERR)
+	{
+		read(fd, &input.nextHistory, sizeof(input.nextHistory));
+		read(fd, input.history, sizeof(input.history));
+		close(fd);
+	}
 	appendrealpath(".backup", sizeof(".backup") - 1);
 	wprintw(out, "\nOpening backup file '%s'...", path);
 	fdBackup = open(path, O_CREAT | O_APPEND | O_RDWR, S_IWUSR | S_IRUSR); 
@@ -795,14 +791,16 @@ main(void)
 	list_account(NULL, NULL);
 get_input: // while(1) IN GOTO WE TRUST
 	{
+		int y, x, sx;
+		int pageSize, iPage;
 		TOKEN *tok;
 		const struct branch *branch;
 		struct value value;
 		struct value values[10];
 		U32 nValues = 0;
 
-		// input will "render" our output pad
-		waddch(out, '\n');
+		// render out
+		setoutpage(0);
 		if(getinput(&input, isUtf8))
 			goto get_input;
 		branch = root;
@@ -821,7 +819,7 @@ get_input: // while(1) IN GOTO WE TRUST
 			for(U32 i = 0; i < ARRLEN(dependencies); i++)
 				if(!strcmp(dependencies[i].name, branch->name))
 				{
-					if(!(tok = nexttoken(&input, &value)) || tok->type != dependencies[i].token)
+					if(!(tok = nexttoken(&input, &value)) || (tok->type != dependencies[i].token && dependencies[i].token))
 					{
 						wattrset(out, ATTR_ERROR);
 						wprintw(out, "\nExpected %s after '%s'", dependencies[i].description, branch->name);

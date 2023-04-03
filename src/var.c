@@ -1,6 +1,7 @@
 #include "pwmgr.h"
 
-static U32 area = 200 * 200;
+U32 area = 200 * 200;
+U32 inputHeight = 3;
 
 static struct variable *variables;
 static U32 nVariables;
@@ -9,7 +10,8 @@ static void __attribute__((constructor))
 init(void)
 {
 	static const struct variable builtin_variables[] = {
-		{ VARTYPE_U32, "area", &area },
+		{ "area", NULL },
+		{ "inputHeight", NULL },
 	};
 	
 	variables = malloc(sizeof(builtin_variables));

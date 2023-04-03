@@ -82,14 +82,13 @@ tokenize(struct input *input)
 		['\r'] = ESPACE,
 		['\f'] = ESPACE,
 
-		['a' ... 'z'] = TWORD,
-		['A' ... 'Z'] = TWORD,
-		['0' ... '9'] = TWORD,
-		['_'] = TWORD,
-
 		['\"'] = ZQUOTEBEGIN,
 		['\\'] = ZQUOTEESCAPE,
 
+		['a' ... 'z'] = TWORD,
+		['A' ... 'Z'] = TWORD,
+		['0' ... '9'] = TNUMBER,
+		['_'] = TWORD,
 		[':'] = TCOLON,
 		['.'] = TDOT,
 		[','] = TCOMMA,
@@ -114,7 +113,7 @@ tokenize(struct input *input)
 	for(buf = input->buf; *buf; buf++)
 	{
 		U32 m;
-		
+
 		m = map[(int) (unsigned char) *buf];
 		switch(last)
 		{
@@ -140,7 +139,7 @@ tokenize(struct input *input)
 			last = ZQUOTEBEGIN;
 			goto fusion;
 		case TWORD:
-			if(m == TWORD)
+			if(m == TWORD || m == TNUMBER)
 			{
 				if(buf - input->buf - tokens[nTokens - 1].pos >= MAX_NAME)
 				{
@@ -150,6 +149,10 @@ tokenize(struct input *input)
 				}
 				goto fusion;
 			}
+			break;
+		case TNUMBER:
+			if(m == TNUMBER)
+				goto fusion;
 			break;
 		}
 		if(!m) // unrecognized character
